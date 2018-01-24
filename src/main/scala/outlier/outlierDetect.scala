@@ -58,7 +58,7 @@ object outlierDetect {
     val mappedData = data
       .flatMap(line => {
         val splitLine = line.split("&")
-        val id = splitLine(0).toInt - 1
+        val id = splitLine(0).toInt
         val value = splitLine(1).toDouble
         val multiplication = id / count_slide
         val new_time: Long = cur_time + (multiplication * time_slide)
@@ -87,6 +87,7 @@ object outlierDetect {
       .keyBy(_.id % parallelism)
       .timeWindow(Time.milliseconds(time_slide))
       .process(new GroupMetadata)
+
     keyedData2.print()
 
     println("Starting outlier test")
@@ -100,28 +101,6 @@ object outlierDetect {
     val total_slides = times_per_slide.size
     println(s"Total Slides: $total_slides")
     println(s"Average time per slide: ${times_per_slide.values.sum.toDouble / total_slides / 1000}")
-  }
-
-  //custom source generating random 1d integers
-  class MySource1d extends SourceFunction[(Int, Int)] {
-
-    private var isRunning = false
-
-    override def cancel() = isRunning = false
-
-    override def run(ctx: SourceFunction.SourceContext[(Int, Int)]) = {
-      isRunning = true
-      var count = 1
-      while (isRunning) {
-        val random = new Random()
-        if (count % 1000 == 0)
-          ctx.collect(count, 500 + random.nextInt(51))
-        else
-          ctx.collect(count, random.nextInt(51))
-        count = count + 1
-        if (count == stopStreamAt + 1) isRunning = false
-      }
-    }
   }
 
   class StormTimestamp extends AssignerWithPeriodicWatermarks[(Int, Data1d)] with Serializable {
@@ -287,15 +266,15 @@ object outlierDetect {
       }
       state.update(current)
 
-      if(current.outliers.size > k){
+      if (current.outliers.size > k) {
 
-      var outliers = ListBuffer[Int]()
-      for (el <- current.outliers.values) {
-        val nnBefore = el.nn_before.count(_ > window.getEnd - time_window)
-        if (nnBefore + el.count_after < k) outliers.+=(el.id)
-      }
+        var outliers = ListBuffer[Int]()
+        for (el <- current.outliers.values) {
+          val nnBefore = el.nn_before.count(_ > window.getEnd - time_window)
+          if (nnBefore + el.count_after < k) outliers.+=(el.id)
+        }
 
-      out.collect(s"window: ${window} list: ${outliers.size}")
+        out.collect(s"window: ${window} list: ${outliers.size}")
       }
       //update stats
       val time2 = System.currentTimeMillis()
@@ -318,5 +297,13 @@ object outlierDetect {
     }
 
   }
+
+  class ExactStormDebug extends ProcessWindowFunction[(Int, Data1d), String, Int, TimeWindow] {
+
+    override def process(key: Int, context: Context, elements: scala.Iterable[(Int, Data1d)], out: Collector[String]): Unit = {
+      out.collect(s"window: ${context.window} list: ${elements.count(_._2.flag == 0)}")
+    }
+  }
+
 
 }
