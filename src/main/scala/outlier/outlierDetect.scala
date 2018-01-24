@@ -29,7 +29,7 @@ import scala.util.control.Breaks._
 object outlierDetect {
 
   //partitioning
-  val parallelism: Int = 1
+  val parallelism: Int = 8
   //count window variables (total / partitions)
   val count_window: Int = 10000
   val count_slide: Int = 500
@@ -88,7 +88,12 @@ object outlierDetect {
       .timeWindow(Time.milliseconds(time_slide))
       .process(new GroupMetadata)
 
-    keyedData2.print()
+    val groupedOutliers = keyedData2
+      .keyBy(_._1)
+      .timeWindow(Time.milliseconds(time_slide))
+      .process(new ShowOutliers)
+
+    groupedOutliers.print()
 
     println("Starting outlier test")
     val timeStart = System.currentTimeMillis()
@@ -220,12 +225,12 @@ object outlierDetect {
 
   case class Metadata(var outliers: Map[Int, StormData])
 
-  class GroupMetadata extends ProcessWindowFunction[StormData, String, Int, TimeWindow] {
+  class GroupMetadata extends ProcessWindowFunction[StormData, (Long, Int), Int, TimeWindow] {
 
     lazy val state: ValueState[Metadata] = getRuntimeContext
       .getState(new ValueStateDescriptor[Metadata]("metadata", classOf[Metadata]))
 
-    override def process(key: Int, context: Context, elements: scala.Iterable[StormData], out: Collector[String]): Unit = {
+    override def process(key: Int, context: Context, elements: scala.Iterable[StormData], out: Collector[(Long, Int)]): Unit = {
       val time1 = System.currentTimeMillis()
       val window = context.window
       var current: Metadata = state.value
@@ -274,7 +279,7 @@ object outlierDetect {
           if (nnBefore + el.count_after < k) outliers.+=(el.id)
         }
 
-        out.collect(s"window: ${window} list: ${outliers.size}")
+        out.collect((window.getEnd,outliers.size))
       }
       //update stats
       val time2 = System.currentTimeMillis()
@@ -298,12 +303,12 @@ object outlierDetect {
 
   }
 
-  class ExactStormDebug extends ProcessWindowFunction[(Int, Data1d), String, Int, TimeWindow] {
+  class ShowOutliers extends ProcessWindowFunction[(Long,Int), String, Long, TimeWindow] {
 
-    override def process(key: Int, context: Context, elements: scala.Iterable[(Int, Data1d)], out: Collector[String]): Unit = {
-      out.collect(s"window: ${context.window} list: ${elements.count(_._2.flag == 0)}")
+    override def process(key: Long, context: Context, elements: scala.Iterable[(Long,Int)], out: Collector[String]): Unit = {
+      val outliers = elements.toList.map(_._2).sum
+      out.collect(s"window: $key outliers: $outliers")
     }
   }
-
 
 }
