@@ -40,8 +40,6 @@ object outlierDetect {
   //distance outlier variables
   val k: Int = 50
   val range: Double = 0.45
-//  val k: Int = 10
-//  val range: Double = 50
   //source variables
   val randomGenerate: Int = 100
   val stopStreamAt: Int = 2000
@@ -57,14 +55,9 @@ object outlierDetect {
 
 
     val data = env.readTextFile("DummyData/stock/stock_id_20k.txt")
-//    val data = env.readTextFile("DummyData/custom1d_100k.txt")
     val mappedData = data
       .flatMap(line => {
-        //for stock
         val splitLine = line.split("&")
-        //for custom
-//        val splitLine = line.replace("(","").replace(")","").split(",")
-
         val id = splitLine(0).toInt - 1
         val value = splitLine(1).toDouble
         val multiplication = id / count_slide
@@ -95,8 +88,6 @@ object outlierDetect {
       .timeWindow(Time.milliseconds(time_slide))
       .process(new GroupMetadata)
     keyedData2.print()
-
-//    keyedData.print()
 
     println("Starting outlier test")
     val timeStart = System.currentTimeMillis()
