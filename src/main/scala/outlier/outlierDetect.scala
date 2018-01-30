@@ -5,6 +5,7 @@ import java.util
 import javax.management.Query
 
 import mtree._
+import org.apache.flink.api.common.ExecutionMode
 import org.apache.flink.api.common.functions.{FlatMapFunction, Partitioner}
 import org.apache.flink.api.common.state.{ValueState, ValueStateDescriptor}
 import org.apache.flink.api.java.io.TextInputFormat
@@ -28,11 +29,13 @@ import scala.util.control.Breaks._
 
 object outlierDetect {
 
+  //data input
+  var data_input : String = "DummyData/stock/stock_id_20k.txt"
   //partitioning
-  val parallelism: Int = 8
+  var parallelism: Int = 8
   //count window variables (total / partitions)
-  val count_window: Int = 10000
-  val count_slide: Int = 500
+  var count_window: Int = 10000
+  var count_slide: Int = 500
   val count_slide_percent: Double = 100 * (count_slide.toDouble / count_window)
   //time window variables
   val time_window: Int = count_window / 10
@@ -50,11 +53,24 @@ object outlierDetect {
 
   def main(args: Array[String]) {
 
-    val env = StreamExecutionEnvironment.createLocalEnvironment(parallelism)
+    if(args.length != 4){
+      println("Wrong arguments!")
+      System.exit(1)
+    }
+
+    parallelism = args(0).toInt
+    count_window = args(1).toInt
+    count_slide = args(2).toInt
+    data_input = args(3)
+
+    val env: StreamExecutionEnvironment = StreamExecutionEnvironment.getExecutionEnvironment
+    env.setParallelism(parallelism)
+
+    //val env = StreamExecutionEnvironment.createLocalEnvironment(parallelism)
     env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime)
 
 
-    val data = env.readTextFile("DummyData/stock/stock_id_20k.txt")
+    val data = env.readTextFile(data_input)
     val mappedData = data
       .flatMap(line => {
         val splitLine = line.split("&")
