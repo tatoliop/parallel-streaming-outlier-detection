@@ -118,10 +118,10 @@ object outlierDetect {
     val time = (timeEnd - timeStart) / 1000
 
     println("Finished outlier test")
-    println("Total run time: " + time + " sec")
-    val total_slides = times_per_slide.size
-    println(s"Total Slides: $total_slides")
-    println(s"Average time per slide: ${times_per_slide.values.sum.toDouble / total_slides / 1000}")
+//    println("Total run time: " + time + " sec")
+//    val total_slides = times_per_slide.size
+//    println(s"Total Slides: $total_slides")
+//    println(s"Average time per slide: ${times_per_slide.values.sum.toDouble / total_slides / 1000}")
   }
 
   class StormTimestamp extends AssignerWithPeriodicWatermarks[(Int, Data1d)] with Serializable {
@@ -224,17 +224,17 @@ object outlierDetect {
         state.update(current)
 
         //update stats
-        val time2 = System.currentTimeMillis()
-        val tmpkey = window.getEnd.toString
-        val tmpvalue = time2 - time1
-        val oldValue = times_per_slide.getOrElse(tmpkey, null)
-        if (oldValue == null) {
-          times_per_slide += ((tmpkey, tmpvalue))
-        } else {
-          val tmpValue = oldValue.toString.toLong
-          val newValue = tmpValue + tmpvalue
-          times_per_slide += ((tmpkey, newValue))
-        }
+//        val time2 = System.currentTimeMillis()
+//        val tmpkey = window.getEnd.toString
+//        val tmpvalue = time2 - time1
+//        val oldValue = times_per_slide.getOrElse(tmpkey, null)
+//        if (oldValue == null) {
+//          times_per_slide += ((tmpkey, tmpvalue))
+//        } else {
+//          val tmpValue = oldValue.toString.toLong
+//          val newValue = tmpValue + tmpvalue
+//          times_per_slide += ((tmpkey, newValue))
+//        }
       }
     }
   }
@@ -298,17 +298,17 @@ object outlierDetect {
         out.collect((window.getEnd,outliers.size))
       }
       //update stats
-      val time2 = System.currentTimeMillis()
-      val tmpkey = window.getEnd.toString
-      val tmpvalue = time2 - time1
-      val oldValue = times_per_slide.getOrElse(tmpkey, null)
-      if (oldValue == null) {
-        times_per_slide += ((tmpkey, tmpvalue))
-      } else {
-        val tmpValue = oldValue.toString.toLong
-        val newValue = tmpValue + tmpvalue
-        times_per_slide += ((tmpkey, newValue))
-      }
+//      val time2 = System.currentTimeMillis()
+//      val tmpkey = window.getEnd.toString
+//      val tmpvalue = time2 - time1
+//      val oldValue = times_per_slide.getOrElse(tmpkey, null)
+//      if (oldValue == null) {
+//        times_per_slide += ((tmpkey, tmpvalue))
+//      } else {
+//        val tmpValue = oldValue.toString.toLong
+//        val newValue = tmpValue + tmpvalue
+//        times_per_slide += ((tmpkey, newValue))
+//      }
     }
 
     def combineElements(el1: StormData, el2: StormData): StormData = {

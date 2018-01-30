@@ -2,7 +2,7 @@ resolvers in ThisBuild ++= Seq("Apache Development Snapshot Repository" at "http
 
 name := "Ourliers"
 
-version := "0.1-SNAPSHOT"
+version := "0.1-mtree-parallel"
 
 organization := "org.delab"
 
