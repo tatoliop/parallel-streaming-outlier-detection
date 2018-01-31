@@ -30,7 +30,7 @@ import scala.util.control.Breaks._
 object outlierDetect {
 
   //data input
-  var data_input : String = "DummyData/stock/stock_id_20k.txt"
+  var data_input: String = "DummyData/stock/stock_id_20k.txt"
   //partitioning
   var parallelism: Int = 8
   //count window variables (total / partitions)
@@ -53,7 +53,7 @@ object outlierDetect {
 
   def main(args: Array[String]) {
 
-    if(args.length != 4){
+    if (args.length != 4) {
       println("Wrong arguments!")
       System.exit(1)
     }
@@ -118,10 +118,10 @@ object outlierDetect {
     val time = (timeEnd - timeStart) / 1000
 
     println("Finished outlier test")
-//    println("Total run time: " + time + " sec")
-//    val total_slides = times_per_slide.size
-//    println(s"Total Slides: $total_slides")
-//    println(s"Average time per slide: ${times_per_slide.values.sum.toDouble / total_slides / 1000}")
+    //    println("Total run time: " + time + " sec")
+    //    val total_slides = times_per_slide.size
+    //    println(s"Total Slides: $total_slides")
+    //    println(s"Average time per slide: ${times_per_slide.values.sum.toDouble / total_slides / 1000}")
   }
 
   class StormTimestamp extends AssignerWithPeriodicWatermarks[(Int, Data1d)] with Serializable {
@@ -160,82 +160,85 @@ object outlierDetect {
 
     override def process(key: Int, context: Context, elements: scala.Iterable[(Int, Data1d)], out: Collector[StormData]): Unit = {
       val time1 = System.currentTimeMillis()
-      if (elements.size > k) {
-        val window = context.window
-        //populate Mtree
-        var current: StateTree = state.value
-        if (current == null) {
-          val nonRandomPromotion = new PromotionFunction[Data1d] {
-            /**
-              * Chooses (promotes) a pair of objects according to some criteria that is
-              * suitable for the application using the M-Tree.
-              *
-              * @param dataSet          The set of objects to choose a pair from.
-              * @param distanceFunction A function that can be used for choosing the
-              *                         promoted objects.
-              * @return A pair of chosen objects.
-              */
-            override def process(dataSet: util.Set[Data1d], distanceFunction: DistanceFunction[_ >: Data1d]): utils.Pair[Data1d] = {
-              utils.Utils.minMax[Data1d](dataSet)
-            }
+      val window = context.window
+      //populate Mtree
+      var current: StateTree = state.value
+      if (current == null) {
+        val nonRandomPromotion = new PromotionFunction[Data1d] {
+          /**
+            * Chooses (promotes) a pair of objects according to some criteria that is
+            * suitable for the application using the M-Tree.
+            *
+            * @param dataSet          The set of objects to choose a pair from.
+            * @param distanceFunction A function that can be used for choosing the
+            *                         promoted objects.
+            * @return A pair of chosen objects.
+            */
+          override def process(dataSet: util.Set[Data1d], distanceFunction: DistanceFunction[_ >: Data1d]): utils.Pair[Data1d] = {
+            utils.Utils.minMax[Data1d](dataSet)
           }
-          val mySplit = new ComposedSplitFunction[Data1d](nonRandomPromotion, new PartitionFunctions.BalancedPartition[Data1d])
-          val myTree = new MTree[Data1d](k, count_window + count_slide, DistanceFunctions.EUCLIDEAN, mySplit)
-          for (el <- elements) {
-            myTree.add(el._2)
-          }
-          current = StateTree(myTree)
-        } else {
-          elements
-            .filter(el => el._2.arrival >= window.getEnd - time_slide)
-            .foreach(el => current.tree.add(el._2))
         }
+        val mySplit = new ComposedSplitFunction[Data1d](nonRandomPromotion, new PartitionFunctions.BalancedPartition[Data1d])
+        val myTree = new MTree[Data1d](k, count_window + count_slide, DistanceFunctions.EUCLIDEAN, mySplit)
+        for (el <- elements) {
+          myTree.add(el._2)
+        }
+        current = StateTree(myTree)
+      } else {
+        elements
+          .filter(el => el._2.arrival >= window.getEnd - time_slide)
+          .foreach(el => current.tree.add(el._2))
+      }
 
-        //Get neighbors
-        elements.foreach(p => {
-          val tmpData = new StormData(p._2)
-          val query: MTree[Data1d]#Query = current.tree.getNearestByRange(tmpData, range)
-          val iter = query.iterator()
-          while (iter.hasNext) {
-            val node = iter.next().data
-            if (node.id != tmpData.id) {
-              if (tmpData.arrival >= window.getEnd - time_slide) {
-                if (node.flag == 0) {
-                  if (node.arrival >= window.getEnd - time_slide)
-                    tmpData.count_after += 1
-                  else
-                    tmpData.nn_before += node.arrival
-                }
-              } else {
+      //Get neighbors
+      elements.foreach(p => {
+        val tmpData = new StormData(p._2)
+        val query: MTree[Data1d]#Query = current.tree.getNearestByRange(tmpData, range)
+        val iter = query.iterator()
+        while (iter.hasNext) {
+          val node = iter.next().data
+          if (node.id != tmpData.id) {
+            if (tmpData.arrival >= window.getEnd - time_slide) {
+              if (node.flag == 0) {
                 if (node.arrival >= window.getEnd - time_slide) {
                   tmpData.count_after += 1
+                  if (tmpData.count_after >= k) tmpData.safe_inlier = true
+                } else {
+                  tmpData.insert_nn_before(node.arrival, k)
                 }
+              }
+            } else {
+              if (node.arrival >= window.getEnd - time_slide) {
+                tmpData.count_after += 1
+                if (tmpData.count_after >= k) tmpData.safe_inlier = true
               }
             }
           }
+        }
+        if (!tmpData.safe_inlier) {
           out.collect(tmpData)
-        })
+        }
+      })
 
-        //Remove expiring objects from tree
-        elements
-          .filter(el => el._2.arrival < window.getStart + time_slide || el._2.flag == 1)
-          .foreach(el => current.tree.remove(el._2))
-        //update state
-        state.update(current)
+      //Remove expiring objects from tree and flagged ones
+      elements
+        .filter(el => el._2.arrival < window.getStart + time_slide || el._2.flag == 1)
+        .foreach(el => current.tree.remove(el._2))
+      //update state
+      state.update(current)
 
-        //update stats
-//        val time2 = System.currentTimeMillis()
-//        val tmpkey = window.getEnd.toString
-//        val tmpvalue = time2 - time1
-//        val oldValue = times_per_slide.getOrElse(tmpkey, null)
-//        if (oldValue == null) {
-//          times_per_slide += ((tmpkey, tmpvalue))
-//        } else {
-//          val tmpValue = oldValue.toString.toLong
-//          val newValue = tmpValue + tmpvalue
-//          times_per_slide += ((tmpkey, newValue))
-//        }
-      }
+      //update stats
+      //        val time2 = System.currentTimeMillis()
+      //        val tmpkey = window.getEnd.toString
+      //        val tmpvalue = time2 - time1
+      //        val oldValue = times_per_slide.getOrElse(tmpkey, null)
+      //        if (oldValue == null) {
+      //          times_per_slide += ((tmpkey, tmpvalue))
+      //        } else {
+      //          val tmpValue = oldValue.toString.toLong
+      //          val newValue = tmpValue + tmpvalue
+      //          times_per_slide += ((tmpkey, newValue))
+      //        }
     }
   }
 
@@ -266,10 +269,10 @@ object outlierDetect {
         current = Metadata(newMap)
       } else { //update list
 
-        //first remove old elements
+        //first remove old elements and elements that are safe inliers
         var forRemoval = ListBuffer[Int]()
         for (el <- current.outliers.values) {
-          if (el.arrival < window.getEnd - time_window) {
+          if (elements.count(_.id == el.id) == 0) {
             forRemoval = forRemoval.+=(el.id)
           }
         }
@@ -287,28 +290,25 @@ object outlierDetect {
       }
       state.update(current)
 
-      if (current.outliers.size > k) {
-
-        var outliers = ListBuffer[Int]()
-        for (el <- current.outliers.values) {
-          val nnBefore = el.nn_before.count(_ > window.getEnd - time_window)
-          if (nnBefore + el.count_after < k) outliers.+=(el.id)
-        }
-
-        out.collect((window.getEnd,outliers.size))
+      var outliers = ListBuffer[Int]()
+      for (el <- current.outliers.values) {
+        val nnBefore = el.nn_before.count(_ > window.getEnd - time_window)
+        if (nnBefore + el.count_after < k) outliers.+=(el.id)
       }
+
+      out.collect((window.getEnd, outliers.size))
       //update stats
-//      val time2 = System.currentTimeMillis()
-//      val tmpkey = window.getEnd.toString
-//      val tmpvalue = time2 - time1
-//      val oldValue = times_per_slide.getOrElse(tmpkey, null)
-//      if (oldValue == null) {
-//        times_per_slide += ((tmpkey, tmpvalue))
-//      } else {
-//        val tmpValue = oldValue.toString.toLong
-//        val newValue = tmpValue + tmpvalue
-//        times_per_slide += ((tmpkey, newValue))
-//      }
+      //      val time2 = System.currentTimeMillis()
+      //      val tmpkey = window.getEnd.toString
+      //      val tmpvalue = time2 - time1
+      //      val oldValue = times_per_slide.getOrElse(tmpkey, null)
+      //      if (oldValue == null) {
+      //        times_per_slide += ((tmpkey, tmpvalue))
+      //      } else {
+      //        val tmpValue = oldValue.toString.toLong
+      //        val newValue = tmpValue + tmpvalue
+      //        times_per_slide += ((tmpkey, newValue))
+      //      }
     }
 
     def combineElements(el1: StormData, el2: StormData): StormData = {
@@ -319,9 +319,9 @@ object outlierDetect {
 
   }
 
-  class ShowOutliers extends ProcessWindowFunction[(Long,Int), String, Long, TimeWindow] {
+  class ShowOutliers extends ProcessWindowFunction[(Long, Int), String, Long, TimeWindow] {
 
-    override def process(key: Long, context: Context, elements: scala.Iterable[(Long,Int)], out: Collector[String]): Unit = {
+    override def process(key: Long, context: Context, elements: scala.Iterable[(Long, Int)], out: Collector[String]): Unit = {
       val outliers = elements.toList.map(_._2).sum
       out.collect(s"window: $key outliers: $outliers")
     }
