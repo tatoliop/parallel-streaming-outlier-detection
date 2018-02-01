@@ -51,6 +51,8 @@ object outlierDetect {
   //helper to slow down stream
   val cur_time = System.currentTimeMillis() + 1000000L //some delay for the correct timestamp
 
+  var id = 0
+
   def main(args: Array[String]) {
 
     if (args.length != 4) {
@@ -68,7 +70,6 @@ object outlierDetect {
 
     //val env = StreamExecutionEnvironment.createLocalEnvironment(parallelism)
     env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime)
-
 
     val data = env.readTextFile(data_input)
     val mappedData = data
@@ -202,7 +203,6 @@ object outlierDetect {
               if (node.flag == 0) {
                 if (node.arrival >= window.getEnd - time_slide) {
                   tmpData.count_after += 1
-                  if (tmpData.count_after >= k) tmpData.safe_inlier = true
                 } else {
                   tmpData.insert_nn_before(node.arrival, k)
                 }
@@ -210,14 +210,11 @@ object outlierDetect {
             } else {
               if (node.arrival >= window.getEnd - time_slide) {
                 tmpData.count_after += 1
-                if (tmpData.count_after >= k) tmpData.safe_inlier = true
               }
             }
           }
         }
-        if (!tmpData.safe_inlier) {
           out.collect(tmpData)
-        }
       })
 
       //Remove expiring objects from tree and flagged ones
@@ -266,13 +263,19 @@ object outlierDetect {
             newMap += ((el.id, newValue))
           }
         }
+        //remove safe inliers
+        var forRemoval = ListBuffer[Int]()
+        for (el <- newMap){
+          if(el._2.count_after >= k) forRemoval = forRemoval.+=(el._2.id)
+        }
+        forRemoval.foreach(el => newMap -= (el))
         current = Metadata(newMap)
       } else { //update list
 
-        //first remove old elements and elements that are safe inliers
+        //first remove old elements
         var forRemoval = ListBuffer[Int]()
         for (el <- current.outliers.values) {
-          if (elements.count(_.id == el.id) == 0) {
+          if (el.arrival < window.getEnd - time_window) {
             forRemoval = forRemoval.+=(el.id)
           }
         }
@@ -280,13 +283,19 @@ object outlierDetect {
         //then insert or combine elements
         for (el <- elements) {
           val oldEl = current.outliers.getOrElse(el.id, null)
-          if (oldEl == null) {
+          if (oldEl == null && el.arrival >= window.getEnd - time_slide) { //insert new elements
             current.outliers += ((el.id, el))
-          } else {
+          } else if(oldEl != null){
             val newValue = combineElements(oldEl, el)
             current.outliers += ((el.id, newValue))
           }
         }
+        //remove safe inliers
+        forRemoval = ListBuffer[Int]()
+        for (el <- current.outliers.values){
+          if(el.count_after >= k) forRemoval = forRemoval.+=(el.id)
+        }
+        forRemoval.foreach(el => current.outliers -= (el))
       }
       state.update(current)
 
@@ -312,8 +321,10 @@ object outlierDetect {
     }
 
     def combineElements(el1: StormData, el2: StormData): StormData = {
-      el1.count_after += el2.count_after - 1
-      el1.nn_before.++=(el2.nn_before)
+      el1.count_after += el2.count_after
+      for (elem <- el2.nn_before) {
+        el1.insert_nn_before(elem, k)
+      }
       el1
     }
 
@@ -323,7 +334,7 @@ object outlierDetect {
 
     override def process(key: Long, context: Context, elements: scala.Iterable[(Long, Int)], out: Collector[String]): Unit = {
       val outliers = elements.toList.map(_._2).sum
-      out.collect(s"window: $key outliers: $outliers")
+      out.collect(s"$key;$outliers")
     }
   }
 
