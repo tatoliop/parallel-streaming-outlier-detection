@@ -2,7 +2,7 @@ resolvers in ThisBuild ++= Seq("Apache Development Snapshot Repository" at "http
 
 name := "Ourliers"
 
-version := "0.1-spatial-mtree"
+version := "0.1-spatial-mcod"
 
 organization := "org.delab"
 
