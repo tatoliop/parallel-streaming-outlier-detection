@@ -258,6 +258,7 @@ object outlierDetect {
               }
             }
             if (tmpData.mc == -1) { //If it doesn't belong to a micro cluster check it against PD and points in rmc
+              var count = 0
               //vars for forming a new mc
               var idMC = 0
               var NC = ListBuffer[Int]()
@@ -285,16 +286,18 @@ object outlierDetect {
                       tmpData.count_after += 1
                     }
                   }
+                  count += 1
                 }
               }
+             // if(tmpData.id == 507) println(window.getEnd + " _____ " + tmpData + " ____ " + NC.size + " _____ " + count)
               if (NC.size >= k) { //create new MC
                 val newMC = new MicroCluster(tmpData.value, NC.size + 1, idMC + 1)
                 current.MC.+=(newMC)
                 tmpData.clear(idMC + 1)
+                //if(NC.contains(507)) println(window.getEnd + " _____ " + tmpData)
                 NC.foreach(p => { //Remove points from PD
-                  //EDO KOLLAEI
-                  //elements.filter(_._2.id == p).head._2.clear(idMC + 1) //clear element on window
                   newMCs += (p -> (idMC + 1))
+                  //elements.filter(_._2.id == p).head._2.clear(idMC + 1)
                   val idx = current.PD.indexWhere(_.id == p)
                   current.PD.remove(idx)
                 })
@@ -312,13 +315,14 @@ object outlierDetect {
       var outliers = ListBuffer[Int]()
       //Find outliers
       current.PD.filter(_.flag == 0).foreach(p => {
+        if(p.id == 507) println("test")
         val nnBefore = p.nn_before.count(_ >= window.getStart)
         if (nnBefore + p.count_after < k) outliers += p.id
       })
 
-            var tmpid = 507
-            if(elements.count(_._2.id == id) ==1 ){
-              println(s"el: ${elements.filter(_._2.id == id).head}")
+            var tmpid = 974
+      if(elements.count(_._2.id == tmpid) ==1 ){
+              println(s"${window.getEnd} el: ${elements.filter(_._2.id == tmpid).head}")
             }
 
 
