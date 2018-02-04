@@ -150,7 +150,6 @@ object outlierDetect {
       .process(new ShowOutliers)
 
     groupedOutliers.print()
-    //      .print()
     println("Starting outlier test")
 
     env.execute("Outlier-flink")
@@ -169,19 +168,6 @@ object outlierDetect {
 
     override def getCurrentWatermark(): Watermark = {
       new Watermark(System.currentTimeMillis - maxOutOfOrderness)
-    }
-  }
-
-  class StormEvictor extends Evictor[(Int, StormData), TimeWindow] {
-    override def evictBefore(elements: Iterable[TimestampedValue[(Int, StormData)]], size: Int, window: TimeWindow, evictorContext: Evictor.EvictorContext): Unit = {
-      val iteratorEl = elements.iterator
-      while (iteratorEl.hasNext) {
-        val tmpNode = iteratorEl.next().getValue._2
-        if (tmpNode.flag == 1 && tmpNode.arrival >= window.getStart && tmpNode.arrival < window.getEnd - time_slide) iteratorEl.remove()
-      }
-    }
-
-    override def evictAfter(elements: Iterable[TimestampedValue[(Int, StormData)]], size: Int, window: TimeWindow, evictorContext: Evictor.EvictorContext): Unit = {
     }
   }
 
@@ -214,7 +200,7 @@ object outlierDetect {
           }
         }
         val mySplit = new ComposedSplitFunction[StormData](nonRandomPromotion, new PartitionFunctions.BalancedPartition[StormData])
-        val myTree = new MTree[StormData](k, count_window + count_slide, DistanceFunctions.EUCLIDEAN, mySplit)
+        val myTree = new MTree[StormData](k, 2 * count_window, DistanceFunctions.EUCLIDEAN, mySplit)
         val PD = ListBuffer[StormData]()
         val MC = ListBuffer[MicroCluster]()
         elements.foreach(p => myTree.add(p._2))
@@ -234,69 +220,9 @@ object outlierDetect {
           elements
             .filter(_._2.mc == mymc.id)
             .foreach(p => {
-              p._2.clear(-1)
               elForRemoval.+=(p._2.id)
+              p._2.clear(-1)
             })
-//            .foreach(p => { //Treat each data point as a new one
-//              val tmpData = p._2
-//              tmpData.clear(-1)
-//              if (current.MC.nonEmpty) { //First check distance to micro clusters
-//                var min = range
-//                var minId = -1
-//                current.MC.filter(em => em.id != mymc.id && em.points >= k).foreach(p => {
-//                  val dist = distance(tmpData, p)
-//                  if (dist <= (range * (3 / 2))) {
-//                    tmpData.rmc.+=(p.id)
-//                    if (dist <= range / 2 && dist < min) {
-//                      min = dist
-//                      minId = p.id
-//                    }
-//                  }
-//                })
-//                if (minId != -1) {
-//                  tmpData.clear(minId)
-//                  current.MC.filter(_.id == minId).head.points += 1
-//                } //If it belongs to a micro-cluster insert it
-//              }
-//              if (tmpData.mc == -1) { //If it doesn't belong to a micro cluster check it against PD and points in rmc
-//                //vars for forming a new mc
-//                var idMC = 0
-//                var NC = ListBuffer[Int]()
-//                if (current.MC.nonEmpty) idMC = current.MC.map(_.id).max //take the max id of current micro clusters
-//                //range query
-//                val query: MTree[StormData]#Query = current.tree.getNearestByRange(tmpData, range)
-//                val iter = query.iterator()
-//                while (iter.hasNext) {
-//                  val node = iter.next().data
-//                  if (node.id != tmpData.id) {
-//                    if (current.PD.contains(node) || tmpData.rmc.contains(node.mc)) { //Update all PD metadata
-//                      if (current.PD.contains(node)) {
-//                        val dist = distance(tmpData, node)
-//                        if (dist <= range / 2) NC.+=(node.id) //Possible new micro cluster
-//                      }
-//                      if (node.arrival > tmpData.arrival) {
-//                        tmpData.count_after += 1
-//                      }
-//                      else {
-//                        tmpData.insert_nn_before(node.arrival, k)
-//                      }
-//                    }
-//                  }
-//                }
-//                if (NC.size >= k) { //create new MC
-//                  val newMC = new MicroCluster(tmpData.value, NC.size + 1, idMC + 1)
-//                  current.MC.+=(newMC)
-//                  tmpData.clear(idMC + 1)
-//                  NC.foreach(p => { //Remove points from PD
-//                    elements.filter(_._2.id == p).head._2.clear(idMC + 1) //clear element on window
-//                    val idx = current.PD.indexWhere(_.id == p)
-//                    current.PD.remove(idx)
-//                  })
-//                } else { //Insert to PD
-//                  current.PD.+=(tmpData)
-//                }
-//              }
-//            })
         }
       })
 
@@ -305,73 +231,83 @@ object outlierDetect {
         current.MC.remove(idx)
       })
 
+      var newMCs = Map[Int,Int]()
+
       //Get neighbors
       elements
         .filter(p => p._2.arrival >= window.getEnd - time_slide || elForRemoval.contains(p._2.id))
         .foreach(p => { //For each new data point
           val tmpData = p._2
-          if (current.MC.nonEmpty) { //First check distance to micro clusters
-            var min = range
-            var minId = -1
-            current.MC.foreach(p => {
-              val dist = distance(tmpData, p)
-              if (dist <= ((3 * range) / 2)) {
-                tmpData.rmc.+=(p.id)
-                if (dist <= range / 2 && dist < min) {
-                  min = dist
-                  minId = p.id
-                }
-              }
-            })
-            if (minId != -1) {
-              tmpData.clear(minId)
-              current.MC.filter(_.id == minId).head.points += 1
-            } //If it belongs to a micro-cluster insert it
-          }
-          if (tmpData.mc == -1) { //If it doesn't belong to a micro cluster check it against PD and points in rmc
-            //vars for forming a new mc
-            var idMC = 0
-            var NC = ListBuffer[Int]()
-            if (current.MC.nonEmpty) idMC = current.MC.map(_.id).max //take the max id of current micro clusters
-            //range query
-            val query: MTree[StormData]#Query = current.tree.getNearestByRange(tmpData, range)
-            val iter = query.iterator()
-            while (iter.hasNext) {
-              val node = iter.next().data
-              if (node.id != tmpData.id) {
-                if (current.PD.contains(node)) { //Update all PD metadata
-                  val dist = distance(tmpData, node)
-                  if (dist <= range / 2) NC.+=(node.id) //Possible new micro cluster
-                  if(tmpData.arrival >= node.arrival){
-                    tmpData.insert_nn_before(node.arrival, k)
-                    current.PD.find(_.id == node.id).get.count_after += 1
-                  }else{
-                    tmpData.count_after += 1
-                    current.PD.find(_.id == node.id).get.insert_nn_before(tmpData.arrival,k)
-                  }
-                } else if (tmpData.rmc.contains(node.mc)) { //Update only the new point's metadata
-                  if(tmpData.arrival >= node.arrival){
-                    tmpData.insert_nn_before(node.arrival, k)
-                  }else{
-                    tmpData.count_after += 1
+          if (!newMCs.contains(tmpData.id)) {
+            if (current.MC.nonEmpty) { //First check distance to micro clusters
+              var min = 2 * range
+              var minId = -1
+              current.MC.foreach(p => {
+                val dist = distance(tmpData, p)
+                if (dist <= ((3 * range) / 2)) {
+                  tmpData.rmc.+=(p.id)
+                  if (dist <= range / 2 && dist < min) {
+                    min = dist
+                    minId = p.id
                   }
                 }
+              })
+              if (minId != -1) { //If it belongs to a micro-cluster insert it
+                tmpData.clear(minId)
+                current.MC.filter(_.id == minId).head.points += 1
               }
             }
-            if (NC.size >= k) { //create new MC
-              val newMC = new MicroCluster(tmpData.value, NC.size + 1, idMC + 1)
-              current.MC.+=(newMC)
-              tmpData.clear(idMC + 1)
-              NC.foreach(p => { //Remove points from PD
-                elements.filter(_._2.id == p).head._2.clear(idMC + 1) //clear element on window
-                val idx = current.PD.indexWhere(_.id == p)
-                current.PD.remove(idx)
-              })
-            } else { //Insert to PD
-              current.PD.+=(tmpData)
+            if (tmpData.mc == -1) { //If it doesn't belong to a micro cluster check it against PD and points in rmc
+              //vars for forming a new mc
+              var idMC = 0
+              var NC = ListBuffer[Int]()
+              if (current.MC.nonEmpty) idMC = current.MC.map(_.id).max //take the max id of current micro clusters
+              //range query
+              val query: MTree[StormData]#Query = current.tree.getNearestByRange(tmpData, range)
+              val iter = query.iterator()
+              while (iter.hasNext) {
+                val node = iter.next().data
+                if (node.id != tmpData.id) {
+                  if (current.PD.contains(node)) { //Update all PD metadata
+                    val dist = distance(tmpData, node)
+                    if (dist <= range / 2) NC.+=(node.id) //Possible new micro cluster
+                    if (tmpData.arrival >= node.arrival) {
+                      tmpData.insert_nn_before(node.arrival, k)
+                      current.PD.filter(_.id == node.id).head.count_after += 1
+                    } else {
+                      tmpData.count_after += 1
+                      current.PD.filter(_.id == node.id).head.insert_nn_before(tmpData.arrival, k)
+                    }
+                  } else if (tmpData.rmc.contains(node.mc)) { //Update only the new point's metadata
+                    if (tmpData.arrival >= node.arrival) {
+                      tmpData.insert_nn_before(node.arrival, k)
+                    } else {
+                      tmpData.count_after += 1
+                    }
+                  }
+                }
+              }
+              if (NC.size >= k) { //create new MC
+                val newMC = new MicroCluster(tmpData.value, NC.size + 1, idMC + 1)
+                current.MC.+=(newMC)
+                tmpData.clear(idMC + 1)
+                NC.foreach(p => { //Remove points from PD
+                  //EDO KOLLAEI
+                  //elements.filter(_._2.id == p).head._2.clear(idMC + 1) //clear element on window
+                  newMCs += (p -> (idMC + 1))
+                  val idx = current.PD.indexWhere(_.id == p)
+                  current.PD.remove(idx)
+                })
+              } else { //Insert to PD
+                current.PD.+=(tmpData)
+              }
             }
           }
         })
+
+      newMCs.foreach(p => {
+        elements.filter(_._2.id == p._1).head._2.clear(p._2)
+      })
 
       var outliers = ListBuffer[Int]()
       //Find outliers
@@ -380,13 +316,14 @@ object outlierDetect {
         if (nnBefore + p.count_after < k) outliers += p.id
       })
 
-
-      //      if(elements.count(_._2.id == 975) ==1 ){
-      //        println(s"el: ${elements.filter(_._2.id == 975).head}")
-      //      }
+            var tmpid = 507
+            if(elements.count(_._2.id == id) ==1 ){
+              println(s"el: ${elements.filter(_._2.id == id).head}")
+            }
 
 
       out.collect((window.getEnd, outliers.size))
+
       //Remove expiring objects from tree and PD/MC
       elements
         .filter(el => el._2.arrival < window.getStart + time_slide)
@@ -396,7 +333,7 @@ object outlierDetect {
             val index = current.PD.indexWhere(_.id == el._2.id)
             current.PD.remove(index)
           } else {
-            current.MC.find(_.id == el._2.mc).get.points -= 1
+            current.MC.filter(_.id == el._2.mc).head.points -= 1
           }
         })
 
