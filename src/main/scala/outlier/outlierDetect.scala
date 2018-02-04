@@ -95,7 +95,7 @@ object outlierDetect {
         val value = splitLine(1).toDouble
         val multiplication = id / count_slide
         val new_time: Long = cur_time + (multiplication * time_slide)
-        var list = new ListBuffer[(Int, Data1d)]
+        var list = new ListBuffer[(Int, StormData)]
         var i = 0
         var break = false
         var belongs_to, previous, next = -1
@@ -122,14 +122,14 @@ object outlierDetect {
             previous = parallelism - 2
           }
         }
-        val tmpEl = (belongs_to, new Data1d(value, new_time, 0, id))
+        val tmpEl = (belongs_to, new StormData(value, new_time, 0, id))
         list.+=(tmpEl)
         if (previous != -1) {
-          val tmpEl2 = (previous, new Data1d(value, new_time, 1, id))
+          val tmpEl2 = (previous, new StormData(value, new_time, 1, id))
           list.+=(tmpEl2)
         }
         if (next != -1) {
-          val tmpEl2 = (next, new Data1d(value, new_time, 1, id))
+          val tmpEl2 = (next, new StormData(value, new_time, 1, id))
           list.+=(tmpEl2)
         }
         list
@@ -142,7 +142,6 @@ object outlierDetect {
       .keyBy(_._1)
       .timeWindow(Time.milliseconds(time_window), Time.milliseconds(time_slide))
       .allowedLateness(Time.milliseconds(1000))
-      .evictor(new StormEvictor)
       .process(new ExactStorm)
 
     val groupedOutliers = keyedData
@@ -151,7 +150,7 @@ object outlierDetect {
       .process(new ShowOutliers)
 
     groupedOutliers.print()
-
+    //      .print()
     println("Starting outlier test")
 
     env.execute("Outlier-flink")
@@ -159,11 +158,11 @@ object outlierDetect {
     println("Finished outlier test")
   }
 
-  class StormTimestamp extends AssignerWithPeriodicWatermarks[(Int, Data1d)] with Serializable {
+  class StormTimestamp extends AssignerWithPeriodicWatermarks[(Int, StormData)] with Serializable {
 
     val maxOutOfOrderness = 1000L // 1 seconds
 
-    override def extractTimestamp(e: (Int, Data1d), prevElementTimestamp: Long) = {
+    override def extractTimestamp(e: (Int, StormData), prevElementTimestamp: Long) = {
       val timestamp = e._2.arrival
       timestamp
     }
@@ -173,8 +172,8 @@ object outlierDetect {
     }
   }
 
-  class StormEvictor extends Evictor[(Int, Data1d), TimeWindow] {
-    override def evictBefore(elements: Iterable[TimestampedValue[(Int, Data1d)]], size: Int, window: TimeWindow, evictorContext: Evictor.EvictorContext): Unit = {
+  class StormEvictor extends Evictor[(Int, StormData), TimeWindow] {
+    override def evictBefore(elements: Iterable[TimestampedValue[(Int, StormData)]], size: Int, window: TimeWindow, evictorContext: Evictor.EvictorContext): Unit = {
       val iteratorEl = elements.iterator
       while (iteratorEl.hasNext) {
         val tmpNode = iteratorEl.next().getValue._2
@@ -182,24 +181,25 @@ object outlierDetect {
       }
     }
 
-    override def evictAfter(elements: Iterable[TimestampedValue[(Int, Data1d)]], size: Int, window: TimeWindow, evictorContext: Evictor.EvictorContext): Unit = {
+    override def evictAfter(elements: Iterable[TimestampedValue[(Int, StormData)]], size: Int, window: TimeWindow, evictorContext: Evictor.EvictorContext): Unit = {
     }
   }
 
-  case class StateTree(var tree: MTree[Data1d])
+  case class MicroCluster(var center: Double, var points: Int, var id: Int)
 
-  class ExactStorm extends ProcessWindowFunction[(Int, Data1d), (Long, Int), Int, TimeWindow] {
+  case class StateTree(var tree: MTree[StormData], var PD: ListBuffer[StormData], var MC: ListBuffer[MicroCluster])
+
+  class ExactStorm extends ProcessWindowFunction[(Int, StormData), (Long, Int), Int, TimeWindow] {
 
     lazy val state: ValueState[StateTree] = getRuntimeContext
-      .getState(new ValueStateDescriptor[StateTree]("myTree", classOf[StateTree]))
+      .getState(new ValueStateDescriptor[StateTree]("myState", classOf[StateTree]))
 
-    override def process(key: Int, context: Context, elements: scala.Iterable[(Int, Data1d)], out: Collector[(Long, Int)]): Unit = {
-      val time1 = System.currentTimeMillis()
+    override def process(key: Int, context: Context, elements: scala.Iterable[(Int, StormData)], out: Collector[(Long, Int)]): Unit = {
       val window = context.window
       //populate Mtree
       var current: StateTree = state.value
       if (current == null) {
-        val nonRandomPromotion = new PromotionFunction[Data1d] {
+        val nonRandomPromotion = new PromotionFunction[StormData] {
           /**
             * Chooses (promotes) a pair of objects according to some criteria that is
             * suitable for the application using the M-Tree.
@@ -209,53 +209,197 @@ object outlierDetect {
             *                         promoted objects.
             * @return A pair of chosen objects.
             */
-          override def process(dataSet: util.Set[Data1d], distanceFunction: DistanceFunction[_ >: Data1d]): utils.Pair[Data1d] = {
-            utils.Utils.minMax[Data1d](dataSet)
+          override def process(dataSet: util.Set[StormData], distanceFunction: DistanceFunction[_ >: StormData]): utils.Pair[StormData] = {
+            utils.Utils.minMax[StormData](dataSet)
           }
         }
-        val mySplit = new ComposedSplitFunction[Data1d](nonRandomPromotion, new PartitionFunctions.BalancedPartition[Data1d])
-        val myTree = new MTree[Data1d](k, count_window + count_slide, DistanceFunctions.EUCLIDEAN, mySplit)
-        for (el <- elements) {
-          myTree.add(el._2)
-        }
-        current = StateTree(myTree)
+        val mySplit = new ComposedSplitFunction[StormData](nonRandomPromotion, new PartitionFunctions.BalancedPartition[StormData])
+        val myTree = new MTree[StormData](k, count_window + count_slide, DistanceFunctions.EUCLIDEAN, mySplit)
+        val PD = ListBuffer[StormData]()
+        val MC = ListBuffer[MicroCluster]()
+        elements.foreach(p => myTree.add(p._2))
+        current = StateTree(myTree, PD, MC)
       } else {
         elements
           .filter(el => el._2.arrival >= window.getEnd - time_slide)
           .foreach(el => current.tree.add(el._2))
       }
 
-      //Variable for number of outliers
-      var outliers = 0
+      //Destroy micro clusters with less than k + 1 points
+      var forRemoval = ListBuffer[Int]()
+      current.MC.foreach(mymc => {
+        if (mymc.points <= k) { //remove MC and reinsert points
+          forRemoval.+=(mymc.id)
+          elements
+            .filter(_._2.mc == mymc.id)
+            .foreach(p => { //Treat each data point as a new one
+              val tmpData = p._2
+              tmpData.clear(-1)
+              if (current.MC.nonEmpty) { //First check distance to micro clusters
+                var min = range
+                var minId = -1
+                current.MC.filter(em => em.id != mymc.id && em.points >= k).foreach(p => {
+                  val dist = distance(tmpData, p)
+                  if (dist <= (range * (3 / 2))) {
+                    tmpData.rmc.+=(p.id)
+                    if (dist <= range / 2 && dist < min) {
+                      min = dist
+                      minId = p.id
+                    }
+                  }
+                })
+                if (minId != -1) {
+                  tmpData.clear(minId)
+                  current.MC.filter(_.id == minId).head.points += 1
+                } //If it belongs to a micro-cluster insert it
+              }
+              if (tmpData.mc == -1) { //If it doesn't belong to a micro cluster check it against PD and points in rmc
+                //vars for forming a new mc
+                var idMC = 0
+                var NC = ListBuffer[Int]()
+                if (current.MC.nonEmpty) idMC = current.MC.map(_.id).max //take the max id of current micro clusters
+                //range query
+                val query: MTree[StormData]#Query = current.tree.getNearestByRange(tmpData, range)
+                val iter = query.iterator()
+                while (iter.hasNext) {
+                  val node = iter.next().data
+                  if (node.id != tmpData.id) {
+                    if (current.PD.contains(node) || tmpData.rmc.contains(node.mc)) { //Update all PD metadata
+                      if (current.PD.contains(node)) {
+                        val dist = distance(tmpData, node)
+                        if (dist <= range / 2) NC.+=(node.id) //Possible new micro cluster
+                      }
+                      if (node.arrival > tmpData.arrival) {
+                        tmpData.count_after += 1
+                      }
+                      else {
+                        tmpData.insert_nn_before(node.arrival, k)
+                      }
+                    }
+                  }
+                }
+                if (NC.size >= k) { //create new MC
+                  val newMC = new MicroCluster(tmpData.value, NC.size + 1, idMC + 1)
+                  current.MC.+=(newMC)
+                  tmpData.clear(idMC + 1)
+                  NC.foreach(p => { //Remove points from PD
+                    elements.filter(_._2.id == p).head._2.clear(idMC + 1) //clear element on window
+                    val idx = current.PD.indexWhere(_.id == p)
+                    current.PD.remove(idx)
+                  })
+                } else { //Insert to PD
+                  current.PD.+=(tmpData)
+                }
+              }
+            })
+        }
+      })
+
+      forRemoval.foreach(p => {
+        val idx = current.MC.indexWhere(_.id == p)
+        current.MC.remove(idx)
+      })
 
       //Get neighbors
       elements
-        .filter(_._2.flag == 0)
-        .foreach(p => {
-          val tmpData = new StormData(p._2)
-          val query: MTree[Data1d]#Query = current.tree.getNearestByRange(tmpData, range)
-          val iter = query.iterator()
-          while (iter.hasNext) {
-            val node = iter.next().data
-            if (node.id != tmpData.id) {
-              if(node.arrival >= tmpData.arrival){
-                tmpData.count_after += 1
-              }else{
-                tmpData.insert_nn_before(node.arrival, k)
+        .filter(p => p._2.arrival >= window.getEnd - time_slide)
+        .foreach(p => { //For each new data point
+          val tmpData = p._2
+          if (current.MC.nonEmpty) { //First check distance to micro clusters
+            var min = range
+            var minId = -1
+            current.MC.foreach(p => {
+              val dist = distance(tmpData, p)
+              if (dist <= ((3 * range) / 2)) {
+                tmpData.rmc.+=(p.id)
+                if (dist <= range / 2 && dist < min) {
+                  min = dist
+                  minId = p.id
+                }
+              }
+            })
+            if (minId != -1) {
+              tmpData.clear(minId)
+              current.MC.filter(_.id == minId).head.points += 1
+            } //If it belongs to a micro-cluster insert it
+          }
+          if (tmpData.mc == -1) { //If it doesn't belong to a micro cluster check it against PD and points in rmc
+            //vars for forming a new mc
+            var idMC = 0
+            var NC = ListBuffer[Int]()
+            if (current.MC.nonEmpty) idMC = current.MC.map(_.id).max //take the max id of current micro clusters
+            //range query
+            val query: MTree[StormData]#Query = current.tree.getNearestByRange(tmpData, range)
+            val iter = query.iterator()
+            while (iter.hasNext) {
+              val node = iter.next().data
+              if (node.id != tmpData.id) {
+                if (current.PD.contains(node)) { //Update all PD metadata
+                  val dist = distance(tmpData, node)
+                  if (dist <= range / 2) NC.+=(node.id) //Possible new micro cluster
+                  tmpData.insert_nn_before(node.arrival, k)
+                  current.PD.find(_.id == node.id).get.count_after += 1
+                } else if (tmpData.rmc.contains(node.mc)) { //Update only the new point's metadata
+                  tmpData.insert_nn_before(node.arrival, k)
+                }
               }
             }
+            if (NC.size >= k) { //create new MC
+              val newMC = new MicroCluster(tmpData.value, NC.size + 1, idMC + 1)
+              current.MC.+=(newMC)
+              tmpData.clear(idMC + 1)
+              NC.foreach(p => { //Remove points from PD
+                elements.filter(_._2.id == p).head._2.clear(idMC + 1) //clear element on window
+                val idx = current.PD.indexWhere(_.id == p)
+                current.PD.remove(idx)
+              })
+            } else { //Insert to PD
+              current.PD.+=(tmpData)
+            }
           }
-          val nnBefore = tmpData.nn_before.count(_ > window.getEnd - time_window)
-          if (nnBefore + tmpData.count_after < k) outliers += 1
         })
-      out.collect((window.getEnd, outliers))
 
-      //Remove expiring objects from tree and flagged ones
+      var outliers = ListBuffer[Int]()
+      //Find outliers
+      current.PD.filter(_.flag == 0).foreach(p => {
+        val nnBefore = p.nn_before.count(_ >= window.getStart)
+        if (nnBefore + p.count_after < k) outliers += p.id
+      })
+
+
+      //      if(elements.count(_._2.id == 975) ==1 ){
+      //        println(s"el: ${elements.filter(_._2.id == 975).head}")
+      //      }
+
+
+      out.collect((window.getEnd, outliers.size))
+      //Remove expiring objects from tree and PD/MC
       elements
         .filter(el => el._2.arrival < window.getStart + time_slide)
-        .foreach(el => current.tree.remove(el._2))
+        .foreach(el => {
+          current.tree.remove(el._2)
+          if (el._2.mc == -1) {
+            val index = current.PD.indexWhere(_.id == el._2.id)
+            current.PD.remove(index)
+          } else {
+            current.MC.find(_.id == el._2.mc).get.points -= 1
+          }
+        })
+
       //update state
       state.update(current)
+    }
+
+    def distance(xs: StormData, ys: StormData): Double = {
+      val value = scala.math.pow(xs.value - ys.value, 2)
+      val res = scala.math.sqrt(value)
+      res
+    }
+
+    def distance(xs: StormData, ys: MicroCluster): Double = {
+      val value = scala.math.pow(xs.value - ys.center, 2)
+      val res = scala.math.sqrt(value)
+      res
     }
   }
 
