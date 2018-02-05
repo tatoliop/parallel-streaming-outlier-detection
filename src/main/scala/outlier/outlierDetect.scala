@@ -203,12 +203,18 @@ object outlierDetect {
         val myTree = new MTree[StormData](k, 2 * count_window, DistanceFunctions.EUCLIDEAN, mySplit)
         val PD = ListBuffer[StormData]()
         val MC = ListBuffer[MicroCluster]()
-        elements.foreach(p => myTree.add(p._2))
+        elements.foreach(p => {
+          myTree.add(p._2)
+          PD.+=(p._2)
+        })
         current = StateTree(myTree, PD, MC)
       } else {
         elements
           .filter(el => el._2.arrival >= window.getEnd - time_slide)
-          .foreach(el => current.tree.add(el._2))
+          .foreach(el => {
+            current.tree.add(el._2)
+            current.PD.+=(el._2)
+          })
       }
 
       //Destroy micro clusters with less than k + 1 points
@@ -255,6 +261,8 @@ object outlierDetect {
               if (minId != -1) { //If it belongs to a micro-cluster insert it
                 tmpData.clear(minId)
                 current.MC.filter(_.id == minId).head.points += 1
+                val idx = current.PD.indexWhere(_.id == tmpData.id)
+                current.PD.remove(idx)
               }
             }
             if (tmpData.mc == -1) { //If it doesn't belong to a micro cluster check it against PD and points in rmc
@@ -289,19 +297,22 @@ object outlierDetect {
                   count += 1
                 }
               }
-             // if(tmpData.id == 507) println(window.getEnd + " _____ " + tmpData + " ____ " + NC.size + " _____ " + count)
+              if(tmpData.id == 974) println(window.getEnd + " _____ " + tmpData + " ____ " + count)
               if (NC.size >= k) { //create new MC
                 val newMC = new MicroCluster(tmpData.value, NC.size + 1, idMC + 1)
                 current.MC.+=(newMC)
                 tmpData.clear(idMC + 1)
-                //if(NC.contains(507)) println(window.getEnd + " _____ " + tmpData)
                 NC.foreach(p => { //Remove points from PD
                   newMCs += (p -> (idMC + 1))
                   //elements.filter(_._2.id == p).head._2.clear(idMC + 1)
                   val idx = current.PD.indexWhere(_.id == p)
                   current.PD.remove(idx)
                 })
-              } else { //Insert to PD
+                val idx = current.PD.indexWhere(_.id == tmpData.id)
+                current.PD.remove(idx)
+              } else { //Update PD
+                val idx = current.PD.indexWhere(_.id == tmpData.id)
+                current.PD.remove(idx)
                 current.PD.+=(tmpData)
               }
             }
@@ -315,7 +326,6 @@ object outlierDetect {
       var outliers = ListBuffer[Int]()
       //Find outliers
       current.PD.filter(_.flag == 0).foreach(p => {
-        if(p.id == 507) println("test")
         val nnBefore = p.nn_before.count(_ >= window.getStart)
         if (nnBefore + p.count_after < k) outliers += p.id
       })
