@@ -10,14 +10,14 @@ import java.io._
 object Add_id {
   def main(args: Array[String]) {
 
-    val old_file = "DummyData/StockDatasets with ids/stock_1m.txt"
+    val old_file = "DummyData/StockDatasets with ids/stock_default.txt"
     val new_file = "DummyData/StockDatasets with ids/stock_100_5.txt"
     val lines = 905000
 
-    reduce(old_file,new_file,lines)
+    //reduce(old_file,new_file,lines)
     //add_id(old_file, new_file)
     //multiply(old_file, new_file)
-    //get_stats(old_file)
+    get_stats(old_file)
 
   }
 
@@ -75,7 +75,7 @@ object Add_id {
 
   def get_stats(old_file: String): Unit ={
 
-    val data = Source.fromFile(old_file).getLines().toList
+    val data = Source.fromFile(old_file).getLines().toList.take(1000000)
     var min : Double = 10000
     var max : Double = -10000
     data.foreach(l=> {
@@ -90,8 +90,7 @@ object Add_id {
 
     val sorted = normalized.sorted
 
-    //8 partitions
-    val partitions = 16
+    val partitions = 32
     for (i <- 1 to partitions){
       val first = sorted.slice((i-1) * sorted.size/partitions, i * (sorted.size/partitions)).last
       println(first)
