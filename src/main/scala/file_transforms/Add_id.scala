@@ -70,10 +70,8 @@ object Add_id {
 
     val writer = new PrintWriter(new File(new_file))
 
-    var count = 0
     list.take(get).foreach(l=> {
       writer.write(l + "\n")
-      if(count%1000000 == 0) writer.flush()
     })
 
     writer.flush()

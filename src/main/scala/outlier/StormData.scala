@@ -16,7 +16,6 @@ class StormData(xc: Double, time: Long, cflag: Int, cid: Int) extends EuclideanC
   var nn_before = ListBuffer[Long]()
   var safe_inlier: Boolean = false
   var mc: Int = -1
-  var rmc = ListBuffer[Int]()
 
 
   def insert_nn_before(el: Long, k: Int): Unit = {
@@ -34,7 +33,6 @@ class StormData(xc: Double, time: Long, cflag: Int, cid: Int) extends EuclideanC
   def clear(newMc: Int):Unit = {
     nn_before.clear()
     count_after = 0
-    rmc.clear()
     mc = newMc
   }
 
@@ -73,5 +71,5 @@ class StormData(xc: Double, time: Long, cflag: Int, cid: Int) extends EuclideanC
 
   override def compare(that: StormData) = this.value.compareTo(that.value)
 
-  override def toString = s"StormData($id, $count_after, ${nn_before.size}, $safe_inlier, $mc, $rmc $flag)"
+  override def toString = s"StormData($id, $count_after, ${nn_before.size}, $safe_inlier, $mc, $flag)"
 }
