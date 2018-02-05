@@ -10,14 +10,21 @@ import java.io._
 object Add_id {
   def main(args: Array[String]) {
 
-    val old_file = "DummyData/StockDatasets with ids/stock_default.txt"
-    val new_file = "DummyData/StockDatasets with ids/stock_100_5.txt"
-    val lines = 905000
+    val old_file1 = "DummyData/StockDatasets with ids/stock_1m.txt"
+    val old_file2 = "DummyData/StockDatasets with ids/stock_10m.txt"
+    val new_file = "DummyData/StockDatasets with ids/stock_10_10.txt"
+    val lines = 191000
 
-    //reduce(old_file,new_file,lines)
+    reduce(old_file1,"DummyData/StockDatasets with ids/stock_10_20.txt",392000)
+    reduce(old_file1,"DummyData/StockDatasets with ids/stock_10_50.txt",995000)
+    reduce(old_file1,"DummyData/StockDatasets with ids/stock_10_1.txt",90100)
+    reduce(old_file2,"DummyData/StockDatasets with ids/stock_100_10.txt",1910000)
+    reduce(old_file2,"DummyData/StockDatasets with ids/stock_100_20.txt",3920000)
+    reduce(old_file2,"DummyData/StockDatasets with ids/stock_100_50.txt",9950000)
+    reduce(old_file2,"DummyData/StockDatasets with ids/stock_100_1.txt",901000)
     //add_id(old_file, new_file)
     //multiply(old_file, new_file)
-    get_stats(old_file)
+    //get_stats(old_file)
 
   }
 
