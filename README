@@ -6,7 +6,7 @@ Parameters:
 --input <Input path of data>
 --window <window size>
 --slide <slide size>
---dataset <dataset for spatial partitioning (works on stock, tao, fc)>
+--dataset <dataset for spatial partitioning (works on stock, tao, fc, gauss)>
 --k <number of neighbors>
 --range <range for distance>
 --algorithm <parallel,advanced,advanced_vp,pmcod>
