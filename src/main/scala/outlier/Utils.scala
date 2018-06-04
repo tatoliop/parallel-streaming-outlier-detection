@@ -5,6 +5,7 @@ import scala.collection.mutable.ListBuffer
 object Utils {
 
   //hardcoded spatial partitioning
+  val spatial_gauss = Map[Int, String](1 -> "0.11139!0.68263!1.163!1.6835!2.5132!3.8782!4.5221!5.0112!5.4983!6.1691!8.4946!9.3379!9.8515!10.33!10.903")
   val spatial_tao = Map[Int, String](1 -> "-0.01", 2 -> "79.23!82.47!85.77", 3 -> "26.932")
   val spatial_fc_5d = Map[Int, String](1 -> "0.56878", 2 -> "0.35278",
     3 -> "0.19697", 4 -> "0.15605", 5 -> "0.26227")
@@ -42,6 +43,7 @@ object Utils {
 
     val res: (Int, ListBuffer[Int]) = dataset match {
       case "stock" => findPartSTOCK(value, range)
+      case "gauss" => findPartGAUSS(value, range)
       case "fc" => findPartFC_2d(value, range)
       case "tao" => findPartTAO(value, range)
       case _ => null
@@ -253,6 +255,45 @@ object Utils {
   def findPartSTOCK(value: ListBuffer[Double], range: Double): (Int, ListBuffer[Int]) = {
 
     val points = spatial_stock(1).split("!").map(_.toDouble).toList
+    val parallelism = points.size + 1
+    var neighbors = ListBuffer[Int]()
+
+    var i = 0
+    var break = false
+    var belongs_to, previous, next = -1
+    do {
+      if (value(0) <= points(i)) {
+        belongs_to = i //belongs to the current partition
+        break = true
+        if (i != 0) {
+          //check if it is near the previous partition
+          if (value(0) <= points(i - 1) + range) {
+            previous = i - 1
+          }
+        } //check if it is near the next partition
+        if (value(0) >= points(i) - range) {
+          next = i + 1
+        }
+      }
+      i += 1
+    } while (i <= parallelism - 2 && !break)
+    if (!break) {
+      // it belongs to the last partition
+      belongs_to = parallelism - 1
+      if (value(0) <= points(parallelism - 2) + range) {
+        previous = parallelism - 2
+      }
+    }
+
+    val partition = belongs_to
+    if (next != -1) neighbors.+=(next)
+    if (previous != -1) neighbors.+=(previous)
+    (partition, neighbors)
+  }
+
+  def findPartGAUSS(value: ListBuffer[Double], range: Double): (Int, ListBuffer[Int]) = {
+
+    val points = spatial_gauss(1).split("!").map(_.toDouble).toList
     val parallelism = points.size + 1
     var neighbors = ListBuffer[Int]()
 

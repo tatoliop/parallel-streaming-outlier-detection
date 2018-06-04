@@ -32,23 +32,16 @@ object outlierDetect {
     val range = parameters.getRequired("range").toDouble
     val algorithm = parameters.getRequired("algorithm")
 
+    val count_slide_percent: Double = 100 * (count_slide.toDouble / count_window)
+    val time_window: Int = count_window / 10
+    val time_slide: Int = (time_window * (count_slide_percent / 100)).toInt
 
     if ((algorithm == "pmcod" || algorithm == "advanced_vp") && parallelism != 16) {
       System.exit(1)
     }
 
-
-    val count_slide_percent: Double = 100 * (count_slide.toDouble / count_window)
-    val time_window: Int = count_window / 10
-    val time_slide: Int = (time_window * (count_slide_percent / 100)).toInt
-
     val data = env.readTextFile(input)
 
-    if (algorithm == "parallel" || algorithm == "advanced") {
-
-    } else if (algorithm == "advanced vp" || algorithm == "pmcod") {
-
-    }
     val mappedData = algorithm match {
       case "parallel" | "advanced" => data
         .flatMap(line => {
