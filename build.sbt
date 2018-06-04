@@ -2,7 +2,7 @@ resolvers in ThisBuild ++= Seq("Apache Development Snapshot Repository" at "http
 
 name := "Ourliers"
 
-version := "0.1-spatial-mcod"
+version := "1.0.0"
 
 organization := "org.delab"
 
@@ -13,6 +13,12 @@ val flinkVersion = "1.4.0"
 val flinkDependencies = Seq(
   "org.apache.flink" %% "flink-scala" % flinkVersion % "provided",
   "org.apache.flink" %% "flink-streaming-scala" % flinkVersion % "provided")
+
+libraryDependencies ++= Seq(
+  "org.scalanlp" %% "breeze" % "0.12",
+  "org.scalanlp" %% "breeze-natives" % "0.12",
+  "org.scalanlp" %% "breeze-viz" % "0.12"
+)
 
 lazy val root = (project in file(".")).
   settings(

@@ -1,11 +1,11 @@
 package outlier
 
 import mtree.DistanceFunctions.EuclideanCoordinate
-
 import scala.collection.mutable.ListBuffer
 
-class StormData(xc: Double, time: Long, cflag: Int, cid: Int) extends EuclideanCoordinate with Comparable[StormData] with Ordered[StormData] {
-  val value: Double = xc
+class Data(xc: ListBuffer[Double], time: Long, cflag: Int, cid: Int) extends EuclideanCoordinate with Comparable[Data] with Ordered[Data] {
+
+  val value: ListBuffer[Double] = xc
   val arrival: Long = time
   val state = Seq(value)
   val hashcode = state.map(_.hashCode()).foldLeft(0)((a, b) => 31 * a + b)
@@ -37,11 +37,12 @@ class StormData(xc: Double, time: Long, cflag: Int, cid: Int) extends EuclideanC
   }
 
 
-  def canEqual(other: Any): Boolean = other.isInstanceOf[StormData]
+  def canEqual(other: Any): Boolean = other.isInstanceOf[Data]
 
   override def equals(other: Any): Boolean = other match {
-    case that: StormData =>
-      value == that.value &&
+    case that: Data =>
+        this.value.size == that.value.size &&
+        value == that.value &&
         id == that.id
     case _ => false
   }
@@ -53,23 +54,28 @@ class StormData(xc: Double, time: Long, cflag: Int, cid: Int) extends EuclideanC
   /**
     * The number of dimensions.
     */
-  override def dimensions() = 1
+  override def dimensions() = value.size
 
   /**
     * A method to access the {@code index}-th component of the coordinate.
     *
     * @param index The index of the component. Must be less than { @link
-    * #dimensions()}.
+    *              #dimensions()}.
     */
-  override def get(index: Int) = value
+  override def get(index: Int) = value(index)
 
-  override def compareTo(t: StormData) = {
-    if(this.value > t.value) +1
-    else if(this.value < t.value) -1
-    else 0
+  override def compareTo(t: Data) = {
+    val dim = Math.min(this.dimensions(), t.dimensions())
+    for (i <- 0 until dim) {
+      if (this.value(i) > t.value(i)) +1
+      else if (this.value(i) < t.value(i)) -1
+      else 0
+    }
+    if (this.dimensions() > dim) +1
+    else -1
   }
 
-  override def compare(that: StormData) = this.value.compareTo(that.value)
+  override def compare(that: Data) = this.compareTo(that)
 
-  override def toString = s"StormData($id, $count_after, ${nn_before.size}, $safe_inlier, $mc, $flag)"
+  override def toString = s"StormData($id, $value, $flag, $count_after, ${nn_before.size})"
 }
