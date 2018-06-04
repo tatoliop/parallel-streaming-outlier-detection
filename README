@@ -1,3 +1,12 @@
 A Flink application project using Scala and SBT.
 
-A parallel approach using the MCOD algorithm for distance based outlier detection on stream
+A parallel approach using the parallel, advanced, advanced vp and pmcod algorithms for distance based outlier detection on streams.
+
+Parameters:
+--input <Input path of data>
+--window <window size>
+--slide <slide size>
+--dataset <dataset for spatial partitioning (works on stock, tao, fc)>
+--k <number of neighbors>
+--range <range for distance>
+--algorithm <parallel,advanced,advanced_vp,pmcod>
