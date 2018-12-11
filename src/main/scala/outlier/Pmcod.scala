@@ -1,254 +1,204 @@
 package outlier
 
+import org.apache.flink.streaming.api.scala.function.ProcessWindowFunction
+import org.apache.flink.streaming.api.windowing.windows.TimeWindow
+import org.apache.flink.util.Collector
 import mtree._
 import org.apache.flink.api.common.state.{ValueState, ValueStateDescriptor}
 import org.apache.flink.streaming.api.scala.function.ProcessWindowFunction
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow
 import org.apache.flink.util.Collector
 import outlier.Utils._
+import java.util.PriorityQueue
+import java.util.Comparator
 
+import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 
-case class MicroCluster(var center: ListBuffer[Double], var points: Int, var id: Int)
+case class McodState(var PD: mutable.HashMap[Int, Data], var MC: mutable.HashMap[Int, MicroCluster])
 
-case class McodState(var tree: MTree[Data], var PD: ListBuffer[Data], var MC: ListBuffer[MicroCluster])
+case class MicroCluster(var center: ListBuffer[Double], var points: ListBuffer[Data])
 
-class Pmcod(time_slide: Int, range: Double, k: Int) extends ProcessWindowFunction[(Int, Data), (Long, Int), Int, TimeWindow] {
+class Pmcod(time_slide: Int, range: Double, k_c: Int) extends ProcessWindowFunction[(Int, Data), (Long, Int), Int, TimeWindow] {
+
+  val slide = time_slide
+  val R = range
+  val k = k_c
+  var mc_counter = 1
 
   lazy val state: ValueState[McodState] = getRuntimeContext
     .getState(new ValueStateDescriptor[McodState]("myState", classOf[McodState]))
 
-  override def process(key: Int, context: Context, elements: scala.Iterable[(Int, Data)], out: Collector[(Long, Int)]): Unit = {
+  override def process(key: Int, context: Context, elements: Iterable[(Int, Data)], out: Collector[(Long, Int)]): Unit = {
 
     val window = context.window
 
-    //populate Mtree
-    var current: McodState = state.value
-    if (current == null) {
-      val nonRandomPromotion = new PromotionFunction[Data] {
-        /**
-          * Chooses (promotes) a pair of objects according to some criteria that is
-          * suitable for the application using the M-Tree.
-          *
-          * @param dataSet          The set of objects to choose a pair from.
-          * @param distanceFunction A function that can be used for choosing the
-          *                         promoted objects.
-          * @return A pair of chosen objects.
-          */
-        override def process(dataSet: java.util.Set[Data], distanceFunction: DistanceFunction[_ >: Data]): utils.Pair[Data] = {
-          utils.Utils.minMax[Data](dataSet)
-        }
-      }
-      val mySplit = new ComposedSplitFunction[Data](nonRandomPromotion, new PartitionFunctions.BalancedPartition[Data])
-      val myTree = new MTree[Data](k, DistanceFunctions.EUCLIDEAN, mySplit)
-      val PD = ListBuffer[Data]()
-      val MC = ListBuffer[MicroCluster]()
-      elements.foreach(p => {
-        myTree.add(p._2)
-      })
-      current = McodState(myTree, PD, MC)
-    } else {
-      elements
-        .filter(el => el._2.arrival >= window.getEnd - time_slide)
-        .foreach(el => {
-          current.tree.add(el._2)
-        })
+    //create state
+    if (state.value == null) {
+      val PD = mutable.HashMap[Int, Data]()
+      val MC = mutable.HashMap[Int, MicroCluster]()
+      val current = McodState(PD, MC)
+      state.update(current)
     }
 
-    //Destroy micro clusters with less than k + 1 points
-    var forRemoval = ListBuffer[Int]()
-    var elForRemoval = ListBuffer[Int]()
-    current.MC.foreach(mymc => {
-      if (mymc.points <= k) { //remove MC and reinsert points
-        forRemoval.+=(mymc.id)
-        elements
-          .filter(_._2.mc == mymc.id)
-          .foreach(p => {
-            elForRemoval.+=(p._2.id)
-            p._2.clear(-1)
-          })
-      }
-    })
-    forRemoval.foreach(p => {
-      val idx = current.MC.indexWhere(_.id == p)
-      current.MC.remove(idx)
-    })
-
-    var newMCs = scala.collection.mutable.Map[Int, Int]()
-    //insert data points from destroyed mcs
+    //insert new elements
     elements
-      .filter(p => elForRemoval.contains(p._2.id))
-      .foreach(p => {
-        val tmpData = p._2
-        tmpData.clear(-1)
-        if (!newMCs.contains(tmpData.id)) {
-          if (current.MC.nonEmpty) { //First check distance to micro clusters
-            var min = 2 * range
-            var minId = -1
-            current.MC.foreach(p => {
-              val dist = distance(tmpData, p)
-              if (dist <= range / 2 && dist < min) {
-                min = dist
-                minId = p.id
-              }
-            })
-            if (minId != -1) { //If it belongs to a micro-cluster insert it
-              tmpData.clear(minId)
-              current.MC.filter(_.id == minId).head.points += 1
-            }
-          }
-          if (tmpData.mc == -1) { //If it doesn't belong to a micro cluster check it against PD and points in MCs
-            var count = 0
-            //vars for forming a new mc
-            var idMC = 0
-            var NC = ListBuffer[Int]()
-            if (current.MC.nonEmpty) idMC = current.MC.map(_.id).max //take the max id of current micro clusters
-            //range query
-            val query: MTree[Data]#Query = current.tree.getNearestByRange(tmpData, range)
-            val iter = query.iterator()
-            while (iter.hasNext) {
-              val node = iter.next().data
-              if (node.id != tmpData.id) {
-                if (node.arrival < window.getEnd - time_slide) { //change only with old neighbors
-                  if (tmpData.arrival >= node.arrival) {
-                    tmpData.insert_nn_before(node.arrival, k)
-                  } else {
-                    tmpData.count_after += 1
-                  }
-                }
-              }
-            }
-            if (NC.size >= k) { //create new MC
-              val newMC = new MicroCluster(tmpData.value, NC.size + 1, idMC + 1)
-              current.MC.+=(newMC)
-              tmpData.clear(idMC + 1)
-              NC.foreach(p => { //Remove points from PD
-                newMCs += (p -> (idMC + 1))
-                val idx = current.PD.indexWhere(_.id == p)
-                current.PD.remove(idx)
-              })
-            } else { //Update PD
-              current.PD.+=(tmpData)
-            }
-          }
-        }
-      })
+      .filter(_._2.arrival >= window.getEnd - slide)
+      .foreach(p => insertPoint(p._2, true))
 
-    newMCs.foreach(p => { //insert data points to new MCs
-      elements.filter(_._2.id == p._1).head._2.clear(p._2)
-    })
-    newMCs.clear()
-
-    //insert new points
-    elements
-      .filter(p => p._2.arrival >= window.getEnd - time_slide)
-      .foreach(p => { //For each new data point
-        val tmpData = p._2
-        if (!newMCs.contains(tmpData.id)) {
-          if (current.MC.nonEmpty) { //First check distance to micro clusters
-            var min = 2 * range
-            var minId = -1
-            current.MC.foreach(p => {
-              val dist = distance(tmpData, p)
-              if (dist <= range / 2 && dist < min) {
-                min = dist
-                minId = p.id
-              }
-            })
-            if (minId != -1) { //If it belongs to a micro-cluster insert it
-              tmpData.clear(minId)
-              current.MC.filter(_.id == minId).head.points += 1
-              //compute vs PD and update PD
-              current.PD.foreach(p => {
-                if (p.arrival < window.getEnd - time_slide) {
-                  val dist = distance(tmpData, p)
-                  if (dist <= range) {
-                    p.count_after += 1
-                  }
-                }
-              })
-            }
-          }
-          if (tmpData.mc == -1) { //If it doesn't belong to a micro cluster check it against PD and points in MCs
-            //vars for forming a new mc
-            var idMC = 0
-            var NC = ListBuffer[Int]()
-            if (current.MC.nonEmpty) idMC = current.MC.map(_.id).max //take the max id of current micro clusters
-            //range query
-
-            val query: MTree[Data]#Query = current.tree.getNearestByRange(tmpData, range)
-            val iter = query.iterator()
-
-            while (iter.hasNext) {
-              val node = iter.next().data
-              if (node.id != tmpData.id) {
-                if (tmpData.arrival >= node.arrival) {
-                  tmpData.insert_nn_before(node.arrival, k)
-                } else {
-                  tmpData.count_after += 1
-                }
-                if (current.PD.count(_.id == node.id) == 1) { //Update all PD metadata
-
-                  val dist = distance(tmpData, node)
-                  if (dist <= range / 2) NC.+=(node.id) //Possible new micro cluster
-
-                  if (node.arrival < window.getEnd - time_slide) {
-                    if (tmpData.arrival >= node.arrival) {
-                      current.PD.filter(_.id == node.id).head.count_after += 1
-                    } else {
-                      current.PD.filter(_.id == node.id).head.insert_nn_before(tmpData.arrival, k)
-                    }
-                  }
-                }
-              }
-            }
-            if (NC.size >= k) { //create new MC
-              val newMC = new MicroCluster(tmpData.value, NC.size + 1, idMC + 1)
-              current.MC.+=(newMC)
-              tmpData.clear(idMC + 1)
-              NC.foreach(p => { //Remove points from PD
-                newMCs += (p -> (idMC + 1))
-                val idx = current.PD.indexWhere(_.id == p)
-                current.PD.remove(idx)
-              })
-            } else { //Update PD
-              current.PD.+=(tmpData)
-            }
-
-          }
-        }
-      })
-
-    newMCs.foreach(p => {
-      elements.filter(_._2.id == p._1).head._2.clear(p._2)
-    })
-
-    var outliers = ListBuffer[Int]()
     //Find outliers
-    current.PD.filter(_.flag == 0).foreach(p => {
-      val nnBefore = p.nn_before.count(_ >= window.getStart)
-      if (nnBefore + p.count_after < k) outliers += p.id
+    var outliers = 0
+    state.value().PD.values.foreach(p => {
+      if (!p.safe_inlier && p.flag == 0)
+        if (p.count_after + p.nn_before.count(_ >= window.getStart) < k) {
+          outliers += 1
+        }
     })
 
-    out.collect((window.getEnd, outliers.size))
+    out.collect((window.getEnd, outliers))
 
-    //Remove expiring objects from tree and PD/MC
+    //Remove old points
+    var deletedMCs = mutable.HashSet[Int]()
     elements
-      .filter(el => el._2.arrival < window.getStart + time_slide)
-      .foreach(el => {
-        current.tree.remove(el._2)
-        if (el._2.mc == -1) {
-          val index = current.PD.indexWhere(_.id == el._2.id)
-          current.PD.remove(index)
-        } else {
-          current.MC.filter(_.id == el._2.mc).head.points -= 1
-        }
+      .filter(p => p._2.arrival < window.getStart + slide)
+      .foreach(p => {
+        val delete = deletePoint(p._2)
+        if (delete > 0) deletedMCs += delete
       })
 
-    //update state
-    state.update(current)
+    //Delete MCs
+    if (deletedMCs.nonEmpty) {
+      var reinsert = ListBuffer[Data]()
+      deletedMCs.foreach(mc => {
+        reinsert = reinsert ++ state.value().MC(mc).points
+        state.value().MC.remove(mc)
+      })
+      val reinsertIndexes = reinsert.map(_.id)
+
+      //Reinsert points from deleted MCs
+      reinsert.foreach(p => insertPoint(p, false, reinsertIndexes))
+    }
   }
 
+  def insertPoint(el: Data, newPoint: Boolean, reinsert: ListBuffer[Int] = null): Unit = {
+    var state = this.state.value()
+    if (!newPoint) el.clear(-1)
+    //Check against MCs on 3/2R
+    val closeMCs = findCloseMCs(el)
+    //Check if closer MC is within R/2
+    val closerMC = if (closeMCs.nonEmpty)
+      closeMCs.minBy(_._2)
+    else
+      (0, Double.MaxValue)
+    if (closerMC._2 <= R / 2) { //Insert element to MC
+      if (newPoint) {
+        insertToMC(el, closerMC._1, true)
+      }
+      else {
+        insertToMC(el, closerMC._1, false, reinsert)
+      }
+    }
+    else { //Check against PD
+      val NC = ListBuffer[Data]()
+      val NNC = ListBuffer[Data]()
+      state.PD.values
+        .foreach(p => {
+          val thisDistance = distance(el, p)
+          if (thisDistance <= 3 * R / 2) {
+            if (thisDistance <= R) { //Update metadata
+              addNeighbor(el, p)
+              if (newPoint) {
+                addNeighbor(p, el)
+              }
+              else {
+                if (reinsert.contains(p.id)) {
+                  addNeighbor(p, el)
+                }
+              }
+            }
+            if (thisDistance <= R / 2) NC += p
+            else NNC += p
+          }
+        })
+
+      if (NC.size >= k) { //Create new MC
+        createMC(el, NC, NNC)
+      }
+      else { //Insert in PD
+        closeMCs.foreach(mc => el.Rmc += mc._1)
+        state.MC.filter(mc => closeMCs.contains(mc._1))
+          .foreach(mc => {
+            mc._2.points.foreach(p => {
+              val thisDistance = distance(el, p)
+              if (thisDistance <= R) {
+                addNeighbor(el, p)
+              }
+            })
+          })
+        state.PD += ((el.id, el))
+      }
+    }
+  }
+
+  def deletePoint(el: Data): Int = {
+    var res = 0
+    if (el.mc <= 0) { //Delete it from PD
+      state.value().PD.remove(el.id)
+    } else {
+      state.value().MC(el.mc).points -= el
+      if (state.value().MC(el.mc).points.size <= k) res = el.mc
+    }
+    res
+  }
+
+  def createMC(el: Data, NC: ListBuffer[Data], NNC: ListBuffer[Data]): Unit = {
+    NC.foreach(p => {
+      p.clear(mc_counter)
+      state.value().PD.remove(p.id)
+    })
+    el.clear(mc_counter)
+    NC += el
+    val newMC = new MicroCluster(el.value, NC)
+    state.value().MC += ((mc_counter, newMC))
+    NNC.foreach(p => p.Rmc += mc_counter)
+    mc_counter += 1
+  }
+
+  def insertToMC(el: Data, mc: Int, update: Boolean, reinsert: ListBuffer[Int] = null): Unit = {
+    el.clear(mc)
+    state.value().MC(mc).points += el
+    if (update) {
+      state.value.PD.values.filter(p => p.Rmc.contains(mc)).foreach(p => {
+        if (distance(p, el) <= R) {
+          addNeighbor(p, el)
+        }
+      })
+    }
+    else {
+      state.value.PD.values.filter(p => p.Rmc.contains(mc) && reinsert.contains(p.id)).foreach(p => {
+        if (distance(p, el) <= R) {
+          addNeighbor(p, el)
+        }
+      })
+    }
+  }
+
+  def findCloseMCs(el: Data): mutable.HashMap[Int, Double] = {
+    val res = mutable.HashMap[Int, Double]()
+    state.value().MC.foreach(mc => {
+      val thisDistance = distance(el, mc._2)
+      if (thisDistance <= (3 * R) / 2) res.+=((mc._1, thisDistance))
+    })
+    res
+  }
+
+  def addNeighbor(el: Data, neigh: Data): Unit = {
+    if (el.arrival > neigh.arrival) {
+      el.insert_nn_before(neigh.arrival, k)
+    } else {
+      el.count_after += 1
+      if (el.count_after >= k) el.safe_inlier = true
+    }
+  }
 
 }
-

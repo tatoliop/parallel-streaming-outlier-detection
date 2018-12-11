@@ -6,7 +6,7 @@ import org.apache.flink.streaming.api.TimeCharacteristic
 import org.apache.flink.streaming.api.scala.StreamExecutionEnvironment
 import org.apache.flink.streaming.api.windowing.time.Time
 import outlier.Algorithms._
-import outlier.Utils._
+import outlier.Partitioning._
 
 import scala.collection.mutable.ListBuffer
 
@@ -17,31 +17,40 @@ object outlierDetect {
 
   def main(args: Array[String]) {
     val parameters: ParameterTool = ParameterTool.fromArgs(args)
-    val env: StreamExecutionEnvironment = StreamExecutionEnvironment.getExecutionEnvironment
-    val parallelism = env.getParallelism
-    env.getConfig.setGlobalJobParameters(parameters)
-
-    env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime)
-
     //Parameters
     val input = parameters.getRequired("input")
+    val treeInput = parameters.get("treeInput", "")
     val count_window = parameters.getRequired("window").toInt
     val count_slide = parameters.getRequired("slide").toInt
     val dataset = parameters.getRequired("dataset")
     val k = parameters.getRequired("k").toInt
     val range = parameters.getRequired("range").toDouble
     val algorithm = parameters.getRequired("algorithm")
+    val partitioning_type = parameters.get("part", "grid")
+    val metric_count = parameters.get("VPcount", "10000").toInt
+    val parallelism = parameters.getRequired("parallelism").toInt
+
+    val myVPTree =
+      if (partitioning_type == "metric") {
+        createVPtree(metric_count, parallelism, treeInput)
+      } else {
+        null
+      }
+
+    val env: StreamExecutionEnvironment = StreamExecutionEnvironment.getExecutionEnvironment
+    env.setParallelism(parallelism)
+    env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime)
+    env.getConfig.enableObjectReuse()
 
     val count_slide_percent: Double = 100 * (count_slide.toDouble / count_window)
     val time_window: Int = count_window / 10
     val time_slide: Int = (time_window * (count_slide_percent / 100)).toInt
 
-    if ((algorithm == "pmcod" || algorithm == "advanced_vp") && parallelism != 16) {
+    if (partitioning_type == "grid" && (algorithm == "pmcod" || algorithm == "advanced_vp" || algorithm == "slicing") && parallelism != 16) {
       System.exit(1)
     }
 
     val data = env.readTextFile(input)
-
     val mappedData = algorithm match {
       case "parallel" | "advanced" => data
         .flatMap(line => {
@@ -52,14 +61,17 @@ object outlierDetect {
           val new_time: Long = cur_time + (multiplication * time_slide)
           replicationPartitioning(parallelism, value, new_time, id)
         })
-      case "pmcod" | "advanced_vp" => data
+      case "pmcod" | "advanced_vp" | "slicing" => data
         .flatMap(line => {
           val splitLine = line.split("&")
           val id = splitLine(0).toInt
           val value = splitLine(1).split(",").map(_.toDouble).to[ListBuffer]
           val multiplication = id / count_slide
           val new_time: Long = cur_time + (multiplication * time_slide)
-          gridPartitioning(parallelism, value, new_time, id, range, dataset)
+          if(partitioning_type == "grid")
+            gridPartitioning(parallelism, value, new_time, id, range, dataset)
+          else
+             metricPartitioning(value, new_time, id, range, parallelism, "VPTree", null, myVPTree)
         })
     }
 
@@ -77,7 +89,12 @@ object outlierDetect {
         .timeWindow(Time.milliseconds(time_window), Time.milliseconds(time_slide))
         .allowedLateness(Time.milliseconds(1000))
         .process(new AdvancedVP(time_slide, range, k))
-      case "advanced" => {
+      case "slicing" => timestampData
+        .keyBy(_._1)
+        .timeWindow(Time.milliseconds(time_window), Time.milliseconds(time_slide))
+        .allowedLateness(Time.milliseconds(1000))
+        .process(new Slicing(time_slide, range, k))
+      case "advanced" =>
         val firstWindow = timestampData
           .keyBy(_._1)
           .timeWindow(Time.milliseconds(time_window), Time.milliseconds(time_slide))
@@ -88,8 +105,7 @@ object outlierDetect {
           .keyBy(_.id % parallelism)
           .timeWindow(Time.milliseconds(time_slide))
           .process(new GroupMetadataAdvanced(time_window, time_slide, range, k))
-      }
-      case "parallel" => {
+      case "parallel" =>
         val firstWindow = timestampData
           .keyBy(_._1)
           .timeWindow(Time.milliseconds(time_window), Time.milliseconds(time_slide))
@@ -100,7 +116,6 @@ object outlierDetect {
           .keyBy(_.id % parallelism)
           .timeWindow(Time.milliseconds(time_slide))
           .process(new GroupMetadataParallel(time_window, time_slide, range, k))
-      }
     }
 
     val groupedOutliers = myWindow

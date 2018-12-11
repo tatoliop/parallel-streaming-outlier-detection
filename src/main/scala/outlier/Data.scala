@@ -1,9 +1,19 @@
 package outlier
 
 import mtree.DistanceFunctions.EuclideanCoordinate
+import outlier.NodeType.NodeType
+
+import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 
-class Data(xc: ListBuffer[Double], time: Long, cflag: Int, cid: Int) extends EuclideanCoordinate with Comparable[Data] with Ordered[Data] {
+//EventQ Var
+object NodeType extends Enumeration with Serializable {
+  type NodeType = Value
+  val OUTLIER, INLIER_MC, INLIER_PD, SAFE_INLIER = Value
+}
+//END EventQ Var
+
+class Data(xc: ListBuffer[Double], time: Long, cflag: Int, cid: Int) extends EuclideanCoordinate with Comparable[Data] with Ordered[Data] with Serializable {
 
   val value: ListBuffer[Double] = xc
   val arrival: Long = time
@@ -15,7 +25,18 @@ class Data(xc: ListBuffer[Double], time: Long, cflag: Int, cid: Int) extends Euc
   var count_after: Int = 0
   var nn_before = ListBuffer[Long]()
   var safe_inlier: Boolean = false
+  //MCOD Vars
   var mc: Int = -1
+  var Rmc = mutable.HashSet[Int]()
+  //END MCOD Vars
+  //EventQ Var
+  var node_type: NodeType = null
+  //EventQ Var
+
+  //SLICING Vars
+  var slices_before = mutable.HashMap[Long, Int]()
+  var last_check: Long = 0L
+  //END SLICING Vars
 
 
   def insert_nn_before(el: Long, k: Int): Unit = {
@@ -30,20 +51,26 @@ class Data(xc: ListBuffer[Double], time: Long, cflag: Int, cid: Int) extends Euc
     }
   }
 
+  def get_min_nn_before(time: Long): Long = {
+    if(nn_before.count(_ >= time) == 0) 0L
+    else nn_before.filter(_ >= time).min
+  }
+
+  //MCOD Funcion
   def clear(newMc: Int):Unit = {
     nn_before.clear()
     count_after = 0
     mc = newMc
   }
-
+  //END MCOD Funcion
 
   def canEqual(other: Any): Boolean = other.isInstanceOf[Data]
 
   override def equals(other: Any): Boolean = other match {
     case that: Data =>
         this.value.size == that.value.size &&
-        value == that.value &&
-        id == that.id
+        this.value == that.value &&
+        this.id == that.id
     case _ => false
   }
 
@@ -77,5 +104,5 @@ class Data(xc: ListBuffer[Double], time: Long, cflag: Int, cid: Int) extends Euc
 
   override def compare(that: Data) = this.compareTo(that)
 
-  override def toString = s"StormData($id, $value, $flag, $count_after, ${nn_before.size})"
+  override def toString = s"Data($value, $id, $flag, $count_after, ${nn_before.size}, $safe_inlier, $mc)"
 }

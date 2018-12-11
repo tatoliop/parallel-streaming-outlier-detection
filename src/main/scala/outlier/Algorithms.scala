@@ -1,6 +1,7 @@
 package outlier
 
 import java.lang
+
 import Utils._
 import org.apache.flink.api.common.state.{ValueState, ValueStateDescriptor}
 import org.apache.flink.streaming.api.functions.AssignerWithPeriodicWatermarks
@@ -11,6 +12,7 @@ import org.apache.flink.streaming.runtime.operators.windowing.TimestampedValue
 import org.apache.flink.streaming.api.scala.function.ProcessWindowFunction
 import org.apache.flink.util.Collector
 
+import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 
 object Algorithms {
@@ -43,13 +45,13 @@ object Algorithms {
   }
 
   class ShowOutliers extends ProcessWindowFunction[(Long, Int), String, Long, TimeWindow] {
-      override def process(key: Long, context: Context, elements: scala.Iterable[(Long, Int)], out: Collector[String]): Unit = {
-        val outliers = elements.toList.map(_._2).sum
-        out.collect(s"$key;$outliers")
-      }
+    override def process(key: Long, context: Context, elements: scala.Iterable[(Long, Int)], out: Collector[String]): Unit = {
+      val outliers = elements.toList.map(_._2).sum
+      out.collect(s"$key;$outliers")
     }
+  }
 
-  case class Metadata(var outliers: Map[Int, Data])
+  case class Metadata(var outliers: mutable.HashMap[Int, Data])
 
   class GroupMetadataAdvanced(time_window: Int, time_slide: Int, range: Double, k: Int) extends ProcessWindowFunction[Data, (Long, Int), Int, TimeWindow] {
 
@@ -60,24 +62,14 @@ object Algorithms {
       val window = context.window
       var current: Metadata = state.value
       if (current == null) { //populate list for the first time
-        var newMap = Map[Int, Data]()
+        var newMap = mutable.HashMap[Int, Data]()
         //all elements are new to the window so we have to combine the same ones
         //and add them to the map
         for (el <- elements) {
           val oldEl = newMap.getOrElse(el.id, null)
-          if (oldEl == null) {
-            newMap += ((el.id, el))
-          } else {
-            val newValue = combineElementsAdvanced(oldEl, el, k)
-            newMap += ((el.id, newValue))
-          }
+          val newValue = combineNewElementsAdvanced(oldEl, el, k)
+          newMap += ((el.id, newValue))
         }
-        //remove safe inliers
-        var forRemoval = ListBuffer[Int]()
-        for (el <- newMap) {
-          if (el._2.count_after >= k) forRemoval = forRemoval.+=(el._2.id)
-        }
-        forRemoval.foreach(el => newMap -= (el))
         current = Metadata(newMap)
       } else { //update list
 
@@ -92,34 +84,28 @@ object Algorithms {
         //then insert or combine elements
         for (el <- elements) {
           val oldEl = current.outliers.getOrElse(el.id, null)
-          if (oldEl == null && el.arrival >= window.getEnd - time_slide) { //insert new elements
-            current.outliers += ((el.id, el))
-          } else if (oldEl != null) {
-            val newValue = combineElementsAdvanced(oldEl, el, k)
+          if (el.arrival >= window.getEnd - time_slide) {
+            val newValue = combineNewElementsAdvanced(oldEl, el, k)
             current.outliers += ((el.id, newValue))
+          } else {
+            if (oldEl != null) {
+              val newValue = combineOldElementsAdvanced(oldEl, el, k)
+              current.outliers += ((el.id, newValue))
+            }
           }
         }
-
-        //remove safe inliers
-        forRemoval = ListBuffer[Int]()
-        for (el <- current.outliers.values) {
-          if (el.count_after >= k) forRemoval = forRemoval.+=(el.id)
-        }
-        forRemoval.foreach(el => current.outliers -= (el))
       }
       state.update(current)
 
       var outliers = ListBuffer[Int]()
       for (el <- current.outliers.values) {
-        val nnBefore = el.nn_before.count(_ >= window.getEnd - time_window)
-        if (nnBefore + el.count_after < k) outliers.+=(el.id)
+        if (!el.safe_inlier) {
+          val nnBefore = el.nn_before.count(_ >= window.getEnd - time_window)
+          if (nnBefore + el.count_after < k) outliers.+=(el.id)
+        }
       }
-
       out.collect((window.getEnd, outliers.size))
     }
-
-
-
   }
 
   class GroupMetadataParallel(time_window: Int, time_slide: Int, range: Double, k: Int) extends ProcessWindowFunction[(Data), (Long, Int), Int, TimeWindow] {
@@ -132,7 +118,7 @@ object Algorithms {
       val window = context.window
       var current: Metadata = state.value
       if (current == null) { //populate list for the first time
-        var newMap = Map[Int, Data]()
+        var newMap = mutable.HashMap[Int, Data]()
         //all elements are new to the window so we have to combine the same ones
         //and add them to the map
         for (el <- elements) {

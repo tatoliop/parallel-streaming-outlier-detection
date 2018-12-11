@@ -4,15 +4,19 @@ name := "Ourliers"
 
 version := "1.0.0"
 
-organization := "org.delab"
+organization := "org.auth.csd.datalab"
 
 scalaVersion in ThisBuild := "2.11.6"
 
 val flinkVersion = "1.4.0"
+//val flinkVersion = "1.6.2"
 
 val flinkDependencies = Seq(
   "org.apache.flink" %% "flink-scala" % flinkVersion % "provided",
-  "org.apache.flink" %% "flink-streaming-scala" % flinkVersion % "provided")
+  "org.apache.flink" %% "flink-streaming-scala" % flinkVersion % "provided"
+  //"org.apache.flink" %% "flink-table" % flinkVersion % "provided",
+  //"com.esotericsoftware" %% "kryo" % "4.0.1"
+)
 
 libraryDependencies ++= Seq(
   "org.scalanlp" %% "breeze" % "0.12",
