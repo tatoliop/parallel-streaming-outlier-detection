@@ -1,11 +1,10 @@
 package outlier
 
-import mtree._
-import org.apache.flink.api.common.state.{ValueState, ValueStateDescriptor}
+import common_utils.Data
+import common_utils.Utils._
 import org.apache.flink.streaming.api.scala.function.ProcessWindowFunction
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow
 import org.apache.flink.util.Collector
-import Utils._
 
 class Parallel(time_slide: Int, range: Double, k: Int) extends ProcessWindowFunction[(Int, Data), Data, Int, TimeWindow] {
 

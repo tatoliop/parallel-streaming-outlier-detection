@@ -1,7 +1,7 @@
-package outlier
+package common_utils
 
 import mtree.DistanceFunctions.EuclideanCoordinate
-import outlier.NodeType.NodeType
+import common_utils.NodeType.NodeType
 
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
@@ -25,19 +25,26 @@ class Data(xc: ListBuffer[Double], time: Long, cflag: Int, cid: Int) extends Euc
   var count_after: Int = 0
   var nn_before = ListBuffer[Long]()
   var safe_inlier: Boolean = false
+
   //MCOD Vars
   var mc: Int = -1
   var Rmc = mutable.HashSet[Int]()
   //END MCOD Vars
+
   //EventQ Var
   var node_type: NodeType = null
-  //EventQ Var
+  //END EventQ Var
 
-  //SLICING Vars
+  //Slicing Vars
   var slices_before = mutable.HashMap[Long, Int]()
   var last_check: Long = 0L
-  //END SLICING Vars
+  //END Slicing Vars
 
+
+  //pAMCOD Stuff
+  var nn_before_set = ListBuffer[(Long,Double)]()
+  var count_after_set = ListBuffer[Double]()
+  //END pAMCOD Stuff
 
   def insert_nn_before(el: Long, k: Int): Unit = {
     if (nn_before.size == k) {
@@ -56,13 +63,20 @@ class Data(xc: ListBuffer[Double], time: Long, cflag: Int, cid: Int) extends Euc
     else nn_before.filter(_ >= time).min
   }
 
-  //MCOD Funcion
+  //MCOD & AMCOD & KSKY Function
   def clear(newMc: Int):Unit = {
+    nn_before_set.clear() //AMCOD
+    count_after_set.clear() //AMCOD
     nn_before.clear()
+    lSky.clear() //KSKY
     count_after = 0
     mc = newMc
   }
-  //END MCOD Funcion
+  //END MCOD & AMCOD & KSKY Function
+
+  //KSKY & PSOD stuff
+  var lSky = mutable.HashMap[Int, ListBuffer[(Int,Long)]]()
+  //END KSKY & PSOD stuff
 
   def canEqual(other: Any): Boolean = other.isInstanceOf[Data]
 
@@ -104,5 +118,6 @@ class Data(xc: ListBuffer[Double], time: Long, cflag: Int, cid: Int) extends Euc
 
   override def compare(that: Data) = this.compareTo(that)
 
-  override def toString = s"Data($value, $id, $flag, $count_after, ${nn_before.size}, $safe_inlier, $mc)"
+  //override def toString = s"Data($value, $id, $flag, $count_after, ${nn_before.size}, $safe_inlier, $mc)"
+  override def toString = s"($id,$arrival)"
 }

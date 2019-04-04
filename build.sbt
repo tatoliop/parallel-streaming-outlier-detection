@@ -14,8 +14,6 @@ val flinkVersion = "1.4.0"
 val flinkDependencies = Seq(
   "org.apache.flink" %% "flink-scala" % flinkVersion % "provided",
   "org.apache.flink" %% "flink-streaming-scala" % flinkVersion % "provided"
-  //"org.apache.flink" %% "flink-table" % flinkVersion % "provided",
-  //"com.esotericsoftware" %% "kryo" % "4.0.1"
 )
 
 libraryDependencies ++= Seq(
@@ -29,7 +27,7 @@ lazy val root = (project in file(".")).
     libraryDependencies ++= flinkDependencies
   )
 
-mainClass in assembly := Some("outlier.outlierDetect")
+mainClass in assembly := Some("outlier.OutlierDetect")
 
 // make run command include the provided dependencies
 run in Compile <<= Defaults.runTask(fullClasspath in Compile, mainClass in (Compile, run), runner in (Compile, run))

@@ -1,6 +1,6 @@
 package jvptree;
 
-import outlier.Data;
+import common_utils.Data;
 
 import java.io.Serializable;
 import java.util.*;

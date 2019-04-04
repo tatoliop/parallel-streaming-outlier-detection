@@ -5,9 +5,9 @@ import org.apache.flink.api.common.state.{ValueState, ValueStateDescriptor}
 import org.apache.flink.streaming.api.scala.function.ProcessWindowFunction
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow
 import org.apache.flink.util.Collector
+import common_utils.Data
 
 import scala.collection.mutable
-import scala.collection.mutable.ListBuffer
 
 case class SlicingState(var trees: mutable.HashMap[Long, MTree[Data]], var triggers: mutable.HashMap[Long, mutable.Set[Int]])
 

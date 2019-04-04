@@ -1,22 +1,12 @@
-package outlier
+package common_utils
 
-import com.esotericsoftware.kryo.io.{Input, Output}
-import com.esotericsoftware.kryo.{DefaultSerializer, Kryo, Serializer}
 import jvptree.VPTree
 import mtree._
-import org.apache.flink.api.common.functions.RichFlatMapFunction
-import org.apache.flink.api.common.state.{ValueState, ValueStateDescriptor}
-import org.apache.flink.core.memory.{DataInputView, DataOutputView}
-import org.apache.flink.util.Collector
-import outlier.outlierDetect.cur_time
-import org.apache.flink.types.Value
 
-import scala.collection.JavaConverters._
 import scala.collection.mutable.ListBuffer
 import scala.io.Source
 import scala.util.Random
-import collection.JavaConverters._
-import scala.Serializable
+import scala.collection.JavaConverters._
 
 object Partitioning {
 

@@ -1,13 +1,9 @@
 package mtree;
 
 import java.io.Serializable;
-import java.lang.reflect.Array;
 import java.util.*;
 
 import mtree.SplitFunction.SplitResult;
-import mtree.utils.Pair;
-import org.apache.flink.shaded.curator.org.apache.curator.shaded.com.google.common.collect.Iterables;
-import outlier.Data;
 
 
 /**

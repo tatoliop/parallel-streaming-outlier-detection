@@ -1,4 +1,9 @@
-package outlier
+package common_utils
+
+import multi_rk_param_outlier.PmcSkyCluster
+import outlier.MicroCluster
+
+import scala.collection.mutable.ListBuffer
 
 object Utils {
 
@@ -14,6 +19,16 @@ object Utils {
   }
 
   def distance(xs: Data, ys: MicroCluster): Double = {
+    val min = Math.min(xs.dimensions(), ys.center.size)
+    var value: Double = 0
+    for (i <- 0 until min) {
+      value += scala.math.pow(xs.value(i) - ys.center(i), 2)
+    }
+    val res = scala.math.sqrt(value)
+    res
+  }
+
+  def distance(xs: Data, ys: PmcSkyCluster): Double = {
     val min = Math.min(xs.dimensions(), ys.center.size)
     var value: Double = 0
     for (i <- 0 until min) {
@@ -59,5 +74,18 @@ object Utils {
       el1.insert_nn_before(elem, k)
     }
     el1
+  }
+
+  private def gcd(a: Int, b: Int): Int= {
+    if(a==0) return b
+    gcd(b%a,a)
+  }
+
+  def find_gcd(myList: ListBuffer[Int]): Int = {
+    var result = myList(0)
+    for (i <- 1 until myList.size){
+      result = gcd(myList(i), result)
+    }
+    result
   }
 }

@@ -1,16 +1,18 @@
-package outlier
+package common_utils
 
 import java.lang
 
-import Utils._
+import multi_rk_param_outlier.MyQuery
+import multi_rkws_param_outlier.MyNewQuery
 import org.apache.flink.api.common.state.{ValueState, ValueStateDescriptor}
 import org.apache.flink.streaming.api.functions.AssignerWithPeriodicWatermarks
+import org.apache.flink.streaming.api.scala.function.ProcessWindowFunction
 import org.apache.flink.streaming.api.watermark.Watermark
 import org.apache.flink.streaming.api.windowing.evictors.Evictor
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow
 import org.apache.flink.streaming.runtime.operators.windowing.TimestampedValue
-import org.apache.flink.streaming.api.scala.function.ProcessWindowFunction
 import org.apache.flink.util.Collector
+import common_utils.Utils.{combineElementsParallel, combineNewElementsAdvanced, combineOldElementsAdvanced}
 
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
@@ -48,6 +50,30 @@ object Algorithms {
     override def process(key: Long, context: Context, elements: scala.Iterable[(Long, Int)], out: Collector[String]): Unit = {
       val outliers = elements.toList.map(_._2).sum
       out.collect(s"$key;$outliers")
+    }
+  }
+
+  class GroupOutliers extends ProcessWindowFunction[(Long, ListBuffer[MyQuery]), String, Long, TimeWindow] {
+    override def process(key: Long, context: Context, elements: scala.Iterable[(Long, ListBuffer[MyQuery])], out: Collector[String]): Unit = {
+      val queries = elements
+        .flatMap(_._2)
+        .toList
+        .groupBy(p => (p.R, p.k))
+        .map(p => (p._1, p._2.map(_.outliers).sum))
+
+      queries.foreach(p => out.collect(s"$key;${p._1._1};${p._1._2};${p._2}"))
+    }
+  }
+
+  class GroupOutliers_MP extends ProcessWindowFunction[(Long, ListBuffer[MyNewQuery]), String, Long, TimeWindow] {
+    override def process(key: Long, context: Context, elements: scala.Iterable[(Long, ListBuffer[MyNewQuery])], out: Collector[String]): Unit = {
+      val queries = elements
+        .flatMap(_._2)
+        .toList
+        .groupBy(p => (p.R, p.k, p.W, p.S))
+        .map(p => (p._1, p._2.map(_.outliers).sum))
+
+      queries.foreach(p => out.collect(s"$key;${p._1._1};${p._1._2};${p._1._3};${p._1._4};${p._2}"))
     }
   }
 
@@ -168,5 +194,6 @@ object Algorithms {
     }
 
   }
+
 
 }

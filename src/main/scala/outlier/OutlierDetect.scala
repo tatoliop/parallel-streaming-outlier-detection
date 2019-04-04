@@ -5,12 +5,12 @@ import org.apache.flink.api.scala.createTypeInformation
 import org.apache.flink.streaming.api.TimeCharacteristic
 import org.apache.flink.streaming.api.scala.StreamExecutionEnvironment
 import org.apache.flink.streaming.api.windowing.time.Time
-import outlier.Algorithms._
-import outlier.Partitioning._
+import common_utils.Algorithms._
+import common_utils.Partitioning._
 
 import scala.collection.mutable.ListBuffer
 
-object outlierDetect {
+object OutlierDetect {
 
   //helper to slow down stream
   val cur_time = System.currentTimeMillis() + 1000000L //some delay for the correct timestamp
@@ -23,12 +23,12 @@ object outlierDetect {
     val count_window = parameters.getRequired("window").toInt
     val count_slide = parameters.getRequired("slide").toInt
     val dataset = parameters.getRequired("dataset")
-    val k = parameters.getRequired("k").toInt
-    val range = parameters.getRequired("range").toDouble
     val algorithm = parameters.getRequired("algorithm")
     val partitioning_type = parameters.get("part", "grid")
     val metric_count = parameters.get("VPcount", "10000").toInt
     val parallelism = parameters.getRequired("parallelism").toInt
+    val k = parameters.getRequired("k").toInt
+    val range = parameters.getRequired("range").toDouble
 
     val myVPTree =
       if (partitioning_type == "metric") {
@@ -68,10 +68,10 @@ object outlierDetect {
           val value = splitLine(1).split(",").map(_.toDouble).to[ListBuffer]
           val multiplication = id / count_slide
           val new_time: Long = cur_time + (multiplication * time_slide)
-          if(partitioning_type == "grid")
+          if (partitioning_type == "grid")
             gridPartitioning(parallelism, value, new_time, id, range, dataset)
           else
-             metricPartitioning(value, new_time, id, range, parallelism, "VPTree", null, myVPTree)
+            metricPartitioning(value, new_time, id, range, parallelism, "VPTree", null, myVPTree)
         })
     }
 
@@ -131,6 +131,5 @@ object outlierDetect {
     println(s"My Time: ${time2 - time1}")
 
   }
-
 
 }
